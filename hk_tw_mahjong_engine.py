@@ -1,17 +1,11 @@
 from collections import Counter
 from dataclasses import dataclass, field
-from itertools import permutations
+from itertools import combinations, permutations
 from typing import List, Tuple, Dict, Optional, Set
 
 # ==========================================
 # 1. 牌張編碼定義與輔助轉換函數
 # ==========================================
-# 萬子: 11-19 (一萬~九萬)
-# 筒子: 21-29 (一筒~九筒)
-# 索子: 31-39 (一索~九索)
-# 風牌: 41=東, 42=南, 43=西, 44=北
-# 三元牌: 51=中, 52=發, 53=白
-
 TILE_NAMES: Dict[int, str] = {
     **{10 + i: f"{i}萬" for i in range(1, 10)},
     **{20 + i: f"{i}筒" for i in range(1, 10)},
@@ -40,12 +34,12 @@ def is_suit(tile: int) -> bool:
 
 
 def get_suit(tile: int) -> int:
-    """回傳門類: 1=萬, 2=筒, 3=索, 4=風, 5=三元"""
+    """1=萬, 2=筒, 3=索, 4=風, 5=三元"""
     return tile // 10
 
 
 def get_num(tile: int) -> int:
-    """回傳序數 (1~9)，字牌回傳 0"""
+    """序數 1~9，字牌回傳 0"""
     return tile % 10 if is_suit(tile) else 0
 
 
@@ -54,93 +48,78 @@ class Meld:
     """
     面子結構:
     - type: 'chow' (順子), 'pong' (刻子), 'kong' (槓子)
-    - tiles: 例如順子 (11, 12, 13), 刻子 (41, 41, 41), 槓子 (51, 51, 51, 51)
-    - is_open: True 代表已落地 (上、碰、明槓)；False 代表門前 (手牌暗順、手牌暗刻、暗槓)
+    - tiles: 例如 (11, 12, 13) 或 (41, 41, 41)
+    - is_open: True=已落地(上/碰/明槓), False=門前手牌(暗順/暗刻/暗槓)
     """
     type: str
     tiles: Tuple[int, ...]
     is_open: bool = False
 
-    def __repr__(self) -> str:
-        prefix = "明" if self.is_open else "暗"
-        t_str = "".join(TILE_NAMES.get(t, str(t)) for t in self.tiles)
-        return f"[{prefix}{self.type}:{t_str}]"
-
 
 @dataclass
 class GameContext:
-    """牌局狀態與特殊事件參數（對應手機 App 介面勾選項）"""
-    seat_wind: int = 41               # 自己門風/正風 (41=東, 42=南, 43=西, 44=北)
-    winning_tile: Optional[int] = None # 最後食胡的那張牌
+    """對應新番數表的所有環境與狀態參數"""
+    seat_wind: int = 41                     # 正風 (41=東, 42=南, 43=西, 44=北)
+    winning_tile: Optional[int] = None      # 食胡的那張牌 (可選，用於精確判別暗番與坎坎糊單吊)
 
-    # 花牌狀態 (春夏秋冬=1~4, 梅蘭菊竹=1~4)
-    good_flowers: int = 0             # 正花數量 (與座位同號，每隻 2 番)
-    bad_flowers: int = 0              # 爛花數量 (與座位不同號，每隻 1 番)
-    flower_sets: int = 0              # 一台花數量 (0=無, 1=一台花10番, 2=兩台花胡30番)
-    is_flower_hu_only: bool = False   # 兩台花(8隻花)直接食胡，不計手牌
+    # 花牌與草牌狀態
+    good_flowers: int = 0                   # 正花數量 (+2番/隻)
+    bad_flowers: int = 0                    # 爛花數量 (+1番/隻)
+    flower_sets: int = 0                    # 一台花加番 (0=無, 1=一台花10番, 2=兩台花30番)
+    has_season_grass: bool = False          # 持有四季草(春夏秋冬)至少1隻 (用於七門齊)
+    has_plant_flower: bool = False          # 持有四君子花(梅蘭菊竹)至少1隻 (用於七門齊)
+    special_flower_hu: str = "none"         # 'none', 'qiqiangyi'(七搶一 50番), 'baxianguohai'(八仙過海 100番)
 
-    # 食胡與聽牌狀態
-    is_zimo: bool = False             # 自摸 (1番；若連同門清則計門清自摸5番)
-    is_riichi: bool = False           # 聽牌 / 叮 (5番)
-    wait_type: str = "normal"         # 'normal'(兩面/多面), 'duipeng'(對碰 1番), 'jiadu'(假獨 1番), 'dudu'(獨獨/單釣/邊張/卡張 2番)
+    # 食胡與聽牌(叮)狀態
+    is_zimo: bool = False                   # 自摸 (+1番；門清自摸合共 8番)
+    riichi_type: str = "none"               # 'none', 'riichi'(聽牌 5 / 門清聽牌 10), 'tianting'(天聽 50), 'diting'(地聽 45)
+    wait_type: str = "normal"               # 'normal'(兩面/多面), 'duipeng'(對碰 2番), 'jiadu'(假獨 1番), 'dudu'(獨獨 2番)
+    special_wait_variant: str = "none"      # 'none', '8fei_ligu'(8飛嚦咕 55), '16fei_buda'(16飛不搭 60), '13fei_13yao'(13飛十三么 130), '14fei_13yao'(14飛十三么 140)
+    buda_dragon_is_concealed: bool = True   # 十六不搭若中不搭龍/三相逢，是否為暗(20番)而非食胡第9隻(明10番)
 
-    # 特殊時機番
-    is_tianhu: bool = False           # 天胡 (100番: 莊家起手補花後即食胡)
-    is_dihu: bool = False             # 地胡 (80番: 閒家第一次摸牌即自摸)
-    is_renhu: bool = False            # 人胡 (80番: 閒家在四隻牌內食胡)
-    is_haidi: bool = False            # 海底撈月 (20番: 最後一隻牌自摸)
-    within_tiles: int = 0             # 7=七只內(20番), 10=十只內(10番), 0=無
+    # 特殊時機番 (天地人胡、4/7/10隻內、海底/河底)
+    timing_hu: str = "none"                 # 'none', 'tianhu'(天糊 100), 'dihu'(地糊 90), 'renhu'(人糊 80), '4tiles'(四隻內 40), '7tiles'(七隻內 20), '10tiles'(十隻內 10)
+    last_tile_hu: str = "none"              # 'none', 'haidi'(海底撈月 40), 'hedi'(河底撈月 20)
 
-    # 花上 / 槓上 / 搶槓
-    is_huashang: bool = False         # 花上食胡 (1番: 摸花時自摸)
-    is_gangshang: bool = False        # 槓上食胡 (1番: 開槓時自摸)
-    is_qianggang: bool = False        # 搶槓食胡 (1番: 搶槓當被搶那家出沖，不當自摸)
-    is_gang_on_gang: bool = False     # 槓上槓食胡 (30番: 開槓後再開槓自摸)
-    is_qiang_gang_on_gang: bool = False # 搶槓上槓食胡 (30番: 當槓上槓那家出沖)
+    # 花/槓上自摸 & 搶槓 & 一炮多響
+    consecutive_flower_kong_zimo: int = 0   # 0=無, 1=1番, 2=5番, 3=20番, 4=50番 (花/槓上自摸 1/5/20/50)
+    is_qianggang: bool = False              # 搶槓 (+5番，當出沖)
+    multi_ron: int = 1                      # 1=單響, 2=一炮雙響(+5番), 3=一炮三響(+15番)
 
     # 莊家與連莊設定
-    is_dealer: bool = False           # 是否做莊 (做莊加 1 番)
-    dealer_streak: int = 0            # 連莊數 (0=無連莊, 1=連一[+3番], 2=連二[+5番], N=連N[+2N+1番])
+    is_dealer: bool = False                 # 莊家 (+1番)
+    dealer_streak: int = 0                  # 連莊數 (連N加 2N+1 番)
 
     # 計錢設定
-    base_price: float = 10.0          # 一底金額 (例如 $10)
-    fan_price: float = 2.0            # 每番金額 (例如 $2)
+    base_price: float = 1.0                 # 一底金額 (預設 $1.0)
+    fan_price: float = 0.1                  # 每番金額 (預設 $0.1)
 
 
 # ==========================================
-# 2. 特殊牌型判別器 (不屬於 5面子+1眼 的牌型)
+# 2. 特殊牌型判別器 (十三么 / 十六不搭 / 嚦咕嚦咕 / 通天龍)
 # ==========================================
 
 def check_shisanyao(hand_tiles: List[int], fixed_melds: List[Meld]) -> Optional[Tuple[int, List[Meld]]]:
-    """
-    檢查【十三么 (80番)】：
-    規則：十三么（13隻么九番子，其中1隻成對，共14隻），
-    另三隻是自己摸回來的順子或暗刻，不能上或碰回來。
-    """
+    """檢查【十三么 (120番) / 13飛 (130番) / 14飛 (140番)】"""
     if any(m.is_open for m in fixed_melds):
         return None
     if len(fixed_melds) > 1 or (len(fixed_melds) == 1 and fixed_melds[0].type == 'kong'):
         return None
-
     counts = Counter(hand_tiles)
     if len(fixed_melds) == 1:
-        extra_meld = fixed_melds[0]
         if not all(counts[y] >= 1 for y in YAOJIU):
             return None
         pair_candidates = [y for y in YAOJIU if counts[y] == 2]
         if len(pair_candidates) == 1 and sum(counts.values()) == 14:
-            return pair_candidates[0], [extra_meld]
+            return pair_candidates[0], [fixed_melds[0]]
         return None
-
     if sum(counts.values()) != 17 or not all(counts[y] >= 1 for y in YAOJIU):
         return None
-
     rem = counts.copy()
     for y in YAOJIU:
         rem[y] -= 1
         if rem[y] == 0:
             del rem[y]
-
     for pair_tile in list(rem.keys()):
         if pair_tile in YAOJIU:
             rem[pair_tile] -= 1
@@ -154,11 +133,8 @@ def check_shisanyao(hand_tiles: List[int], fixed_melds: List[Meld]) -> Optional[
     return None
 
 
-def check_shiliubuda(hand_tiles: List[int], fixed_melds: List[Meld]) -> Optional[int]:
-    """
-    檢查【十六不搭 / 九唔搭八 (40番)】：
-    規則：東南西北中發白，其他三門每樣三隻，但不能搭上（同門任兩隻差值 >= 3，如 149、259），再加一對眼。
-    """
+def check_shiliubuda(hand_tiles: List[int], fixed_melds: List[Meld]) -> Optional[Tuple[int, Dict[int, Tuple[int, int, int]]]]:
+    """檢查【十六不搭 (50番) / 16飛十六不搭 (60番)】並回傳對眼與三門不搭組合"""
     if fixed_melds or len(hand_tiles) != 17:
         return None
     counts = Counter(hand_tiles)
@@ -167,21 +143,19 @@ def check_shiliubuda(hand_tiles: List[int], fixed_melds: List[Meld]) -> Optional
     if len(counts) != 16 or max(counts.values()) != 2:
         return None
     pair_tile = next(t for t, c in counts.items() if c == 2)
-
+    suit_sets: Dict[int, Tuple[int, int, int]] = {}
     for suit in (1, 2, 3):
-        suit_tiles = sorted(t % 10 for t in counts.keys() if t // 10 == suit)
+        suit_tiles = tuple(sorted(t % 10 for t in counts.keys() if t // 10 == suit))
         if len(suit_tiles) != 3:
             return None
         if (suit_tiles[1] - suit_tiles[0] < 3) or (suit_tiles[2] - suit_tiles[1] < 3):
             return None
-    return pair_tile
+        suit_sets[suit] = suit_tiles
+    return pair_tile, suit_sets
 
 
 def check_liguligu(hand_tiles: List[int], fixed_melds: List[Meld]) -> Optional[Tuple[List[int], int]]:
-    """
-    檢查【嚦咕嚦咕 (40番)】：
-    規則：八對子，三隻一樣的不能碰出（17張手牌由 7個對子 + 1個暗刻 組成）。
-    """
+    """檢查【嚦咕嚦咕 (45番) / 8飛嚦咕嚦咕 (55番)】，回傳 (8個對子的牌代碼列表, 刻子牌代碼)"""
     if fixed_melds or len(hand_tiles) != 17:
         return None
     counts = Counter(hand_tiles)
@@ -189,19 +163,56 @@ def check_liguligu(hand_tiles: List[int], fixed_melds: List[Meld]) -> Optional[T
     if len(odd_tiles) != 1 or counts[odd_tiles[0]] != 3:
         return None
     triplet_tile = odd_tiles[0]
-    pairs = []
+    eight_pairs: List[int] = [triplet_tile]
     for t, c in sorted(counts.items()):
         if t == triplet_tile:
             continue
         if c == 2:
-            pairs.append(t)
+            eight_pairs.append(t)
         elif c == 4:
-            pairs.extend([t, t])
+            eight_pairs.extend([t, t])
         else:
             return None
-    if len(pairs) == 7:
-        return pairs, triplet_tile
+    if len(eight_pairs) == 8:
+        return sorted(eight_pairs), triplet_tile
     return None
+
+
+def check_tongtian_dragon(melds: List[Meld], pair: int) -> Optional[str]:
+    """
+    檢查【通天清龍 (240番) / 通天雜龍 (100番)】：
+    - 17 張全為數牌 (無番子、無槓子)，包含 123 + 456 + 789 貫穿 1~9。
+    - 備註規定：「通天龍必須頭/尾三隻 i.e 11223334455667788 則不是」
+      即數字 1 (頭) 或數字 9 (尾) 在全副牌中必須至少有 3 張，且不可有非頭尾(2~8)的刻子破壞巨龍連貫。
+    """
+    all_tiles = [t for m in melds for t in m.tiles] + [pair, pair]
+    if any(not is_suit(t) for t in all_tiles) or any(m.type == 'kong' for m in melds):
+        return None
+    chows = [m for m in melds if m.type == 'chow']
+    pongs = [m for m in melds if m.type == 'pong']
+    if len(pongs) > 1:
+        return None
+    if len(pongs) == 1 and get_num(pongs[0].tiles[0]) not in (1, 9):
+        return None
+
+    has_123 = any(get_num(m.tiles[0]) == 1 for m in chows)
+    has_456 = any(get_num(m.tiles[0]) == 4 for m in chows)
+    has_789 = any(get_num(m.tiles[0]) == 7 for m in chows)
+    if not (has_123 and has_456 and has_789):
+        return None
+
+    num_counts = Counter(get_num(t) for t in all_tiles)
+    if not all(num_counts[n] >= 1 for n in range(1, 10)):
+        return None
+
+    # 必須頭(1)或尾(9)至少三隻，且對眼或刻子必須鎮住頭(1)或尾(9)
+    has_head_three = (num_counts[1] >= 3) and (get_num(pair) == 1 or any(get_num(p.tiles[0]) == 1 for p in pongs))
+    has_tail_three = (num_counts[9] >= 3) and (get_num(pair) == 9 or any(get_num(p.tiles[0]) == 9 for p in pongs))
+    if not (has_head_three or has_tail_three):
+        return None
+
+    suits = {get_suit(t) for t in all_tiles}
+    return "通天清龍" if len(suits) == 1 else "通天雜龍"
 
 
 # ==========================================
@@ -212,30 +223,23 @@ def find_standard_decompositions(
     hand_tiles: List[int],
     fixed_melds: List[Meld]
 ) -> List[Tuple[List[Meld], int]]:
-    """將手牌 + 已落地面子拆解為所有合法的 (5組面子, 1對眼) 組合"""
     counts = Counter(hand_tiles)
     needed_melds = 5 - len(fixed_melds)
     if needed_melds < 0:
         return []
-
     raw_decomps: List[Tuple[List[Meld], int]] = []
 
     def backtrack(current_counts: Counter, current_melds: List[Meld], current_pair: int):
         if len(current_melds) == needed_melds:
             raw_decomps.append((list(current_melds), current_pair))
             return
-
         first_tile = min(t for t, c in current_counts.items() if c > 0)
-
-        # 1. 嘗試暗刻 (Pong)
         if current_counts[first_tile] >= 3:
             current_counts[first_tile] -= 3
-            current_melds.append(Meld('pong', (first_tile, first_tile, first_tile), is_open=False))
+            current_melds.append(Meld('pong', (first_tile,) * 3, is_open=False))
             backtrack(current_counts, current_melds, current_pair)
             current_melds.pop()
             current_counts[first_tile] += 3
-
-        # 2. 嘗試順子 (Chow)
         if is_suit(first_tile) and get_num(first_tile) <= 7:
             t2, t3 = first_tile + 1, first_tile + 2
             if current_counts[t2] > 0 and current_counts[t3] > 0:
@@ -262,26 +266,29 @@ def find_standard_decompositions(
         if sig not in seen:
             seen.add(sig)
             unique_results.append((list(fixed_melds) + hand_melds, pair))
-
     return unique_results
 
 
 # ==========================================
-# 4. 完整 68+ 種番型評估引擎 (依截圖規則)
+# 4. 共通狀態番與大雞糊/莊家結算器
 # ==========================================
 
-def evaluate_common_context_fans(
+def evaluate_context_and_flower_fans(
     ctx: GameContext,
     is_menqing: bool,
+    is_special_non_menqing_hand: bool = False,
     skip_no_flower: bool = False
 ) -> List[Tuple[str, int]]:
-    """評估所有牌型共通的花牌、門清自摸、聽牌、叫胡、時機與槓上番"""
+    """
+    計算花牌、門清、自摸、聽牌(叮)、叫胡型態、時機與槓上番。
+    備註規定：「嚦咕, 不搭, 十三么不計門清一摸八, 門清叮」(由 is_special_non_menqing_hand 控制)
+    """
     fans: List[Tuple[str, int]] = []
     total_flowers = ctx.good_flowers + ctx.bad_flowers + (ctx.flower_sets * 4)
 
-    # --- 花牌番 ---
-    if ctx.flower_sets == 2:
-        fans.append(("兩台花(花胡)", 30))
+    # 1. 花牌番
+    if ctx.flower_sets == 2 and ctx.special_flower_hu == "none":
+        fans.append(("兩台花", 30))
     elif ctx.flower_sets == 1:
         fans.append(("一台花", 10))
 
@@ -290,90 +297,103 @@ def evaluate_common_context_fans(
     if ctx.bad_flowers > 0:
         fans.append((f"爛花 x{ctx.bad_flowers}", 1 * ctx.bad_flowers))
 
-    if not skip_no_flower and total_flowers == 0 and ctx.flower_sets == 0:
+    if not skip_no_flower and total_flowers == 0 and ctx.flower_sets == 0 and not ctx.has_season_grass and not ctx.has_plant_flower:
         fans.append(("無花", 1))
 
-    # --- 門清與自摸 (搶槓不當自摸) ---
-    effective_zimo = ctx.is_zimo and not (ctx.is_qianggang or ctx.is_qiang_gang_on_gang)
-    if is_menqing and effective_zimo:
-        fans.append(("門清自摸", 5))
-    else:
-        if is_menqing:
-            fans.append(("門清", 3))
+    # 2. 門清 / 門清自摸(8) / 自摸(1)
+    effective_zimo = ctx.is_zimo and not ctx.is_qianggang
+    if is_special_non_menqing_hand:
+        # 嚦咕、不搭、十三么不計門清、不計一摸八(8)，若自摸只計自摸(1)
         if effective_zimo:
             fans.append(("自摸", 1))
+    else:
+        if is_menqing and effective_zimo:
+            fans.append(("門清自摸", 8))
+        else:
+            if is_menqing:
+                fans.append(("門清", 5))
+            if effective_zimo:
+                fans.append(("自摸", 1))
 
-    # --- 聽牌(叮)與叫胡方式 ---
-    if ctx.is_riichi:
-        fans.append(("聽牌(叮)", 5))
+    # 3. 聽牌(叮) / 聽牌(門清) / 天聽 / 地聽
+    if ctx.riichi_type == "tianting":
+        fans.append(("天聽", 50))
+    elif ctx.riichi_type == "diting":
+        fans.append(("地聽", 45))
+    elif ctx.riichi_type == "riichi":
+        if is_menqing and not is_special_non_menqing_hand:
+            fans.append(("聽牌(門清)", 10))
+        else:
+            fans.append(("聽牌", 5))
+
+    # 4. 對碰(2) / 獨獨(2) / 假獨(1)
     if ctx.wait_type == "duipeng":
-        fans.append(("對碰", 1))
-    elif ctx.wait_type == "jiadu":
-        fans.append(("假獨", 1))
+        fans.append(("對碰", 2))
     elif ctx.wait_type == "dudu":
         fans.append(("獨獨", 2))
+    elif ctx.wait_type == "jiadu":
+        fans.append(("假獨", 1))
 
-    # --- 天地人胡、海底、七/十只內 ---
-    if ctx.is_tianhu:
-        fans.append(("天胡", 100))
-    elif ctx.is_dihu:
-        fans.append(("地胡", 80))
-    elif ctx.is_renhu:
-        fans.append(("人胡", 80))
+    # 5. 天地人糊 & 4/7/10隻內 & 海底/河底
+    timing_map = {
+        "tianhu": ("天糊", 100),
+        "dihu": ("地糊", 90),
+        "renhu": ("人糊", 80),
+        "4tiles": ("四隻內", 40),
+        "7tiles": ("七隻內", 20),
+        "10tiles": ("十隻內", 10),
+    }
+    if ctx.timing_hu in timing_map:
+        fans.append(timing_map[ctx.timing_hu])
 
-    if ctx.is_haidi:
-        fans.append(("海底撈月", 20))
-    if ctx.within_tiles == 7:
-        fans.append(("七只內", 20))
-    elif ctx.within_tiles == 10:
-        fans.append(("十只內", 10))
+    if ctx.last_tile_hu == "haidi":
+        fans.append(("海底撈月", 40))
+    elif ctx.last_tile_hu == "hedi":
+        fans.append(("河底撈月", 20))
 
-    # --- 花上 / 槓上 / 搶槓 ---
-    if ctx.is_huashang:
-        fans.append(("花上食胡", 1))
-    if ctx.is_gang_on_gang:
-        fans.append(("槓上槓食胡", 30))
-    elif ctx.is_gangshang:
-        fans.append(("槓上食胡", 1))
+    # 6. 花/槓上自摸 (1/5/20/50) & 搶槓(5) & 一炮雙響(5)/三響(15)
+    fk_map = {1: 1, 2: 5, 3: 20, 4: 50}
+    if ctx.consecutive_flower_kong_zimo in fk_map:
+        cnt = ctx.consecutive_flower_kong_zimo
+        fans.append((f"花/槓上自摸 ({cnt}連)", fk_map[cnt]))
 
-    if ctx.is_qiang_gang_on_gang:
-        fans.append(("搶槓上槓食胡", 30))
-    elif ctx.is_qianggang:
-        fans.append(("搶槓食胡", 1))
+    if ctx.is_qianggang:
+        fans.append(("搶槓", 5))
+
+    if ctx.multi_ron == 2:
+        fans.append(("一炮雙響", 5))
+    elif ctx.multi_ron == 3:
+        fans.append(("一炮三響", 15))
 
     return fans
 
 
-def apply_dealer_and_jihu(
+def finalize_with_dealer(
     fans: List[Tuple[str, int]],
     ctx: GameContext
 ) -> Tuple[int, List[Tuple[str, int]]]:
-    """套用【雞胡 (10番)】判定與【做莊 / 連莊】加番"""
-    effective_zimo = ctx.is_zimo and not (ctx.is_qianggang or ctx.is_qiang_gang_on_gang)
-    hand_fan_sum = sum(score for _, score in fans)
-
-    # 截圖規則：雞胡 (10番) - 胡出時(不計莊前)只得一番。如果自摸或已叫了聽牌就一定不是雞胡了
-    if hand_fan_sum == 1 and not effective_zimo and not ctx.is_riichi and not ctx.is_flower_hu_only:
-        fans = [("雞胡 (原為1番)", 10)]
-
-    # 莊家與連莊加番：凡做莊胡牌額外加 1 番；連莊額外加 骰仔數字 x 2 + 1 番
+    """加上莊家與連莊番數"""
     if ctx.is_dealer:
         fans.append(("莊家", 1))
         if ctx.dealer_streak > 0:
             streak_bonus = ctx.dealer_streak * 2 + 1
             fans.append((f"連{ctx.dealer_streak} (拉莊)", streak_bonus))
+    return sum(s for _, s in fans), fans
 
-    total = sum(score for _, score in fans)
-    return total, fans
 
+# ==========================================
+# 5. 標準牌型 (5面子+1眼) 完整計番引擎
+# ==========================================
 
 def evaluate_standard_decomposition(
     melds: List[Meld],
     pair: int,
     ctx: GameContext
 ) -> Tuple[int, List[Tuple[str, int]]]:
-    """對單一標準拆解 (5組面子 + 1對眼) 進行完整番數計算"""
-    fans: List[Tuple[str, int]] = []
+    """
+    根據新番數表與 14 條備註，評估標準 5組面子+1對眼 的所有番種。
+    """
+    hand_pattern_fans: List[Tuple[str, int]] = []
 
     all_tiles = [t for m in melds for t in m.tiles] + [pair, pair]
     non_kong_tiles = [t for m in melds if m.type != 'kong' for t in m.tiles] + [pair, pair]
@@ -383,7 +403,9 @@ def evaluate_standard_decomposition(
     has_winds = any(t in WINDS for t in all_tiles)
     has_dragons = any(t in DRAGONS for t in all_tiles)
     has_honors = has_winds or has_dragons
+
     total_flowers = ctx.good_flowers + ctx.bad_flowers + (ctx.flower_sets * 4)
+    has_any_flower = (total_flowers > 0) or ctx.has_season_grass or ctx.has_plant_flower
 
     chows = [m for m in melds if m.type == 'chow']
     pongs = [m for m in melds if m.type in ('pong', 'kong')]
@@ -391,44 +413,32 @@ def evaluate_standard_decomposition(
 
     is_pinghu = (len(chows) == 5)
     is_menqing = all(not m.is_open for m in melds)
-    effective_zimo = ctx.is_zimo and not (ctx.is_qianggang or ctx.is_qiang_gang_on_gang)
+    effective_zimo = ctx.is_zimo and not ctx.is_qianggang
 
     # --------------------------------------------------
-    # A. 平胡 / 無字 / 無花 / 無字花 / 大平糊 (組合互斥處理)
+    # A. 無字 / 無花 / 無字花 / 平糊 / 無字花大平糊
+    # 備註規定：「任何牌型都不會走無字 e.g. 斷么, 清一色 etc」
     # --------------------------------------------------
     skip_no_flower = False
-    is_no_flower = (total_flowers == 0 and ctx.flower_sets == 0)
-
-    is_qingyise = (len(suits_present) == 1 and not has_honors)
-    is_queyimen = (len(suits_present) == 2)
-    is_duanyao = all(t not in YAOJIU for t in all_tiles)
-    is_quandaiyao_no_honor = (not has_honors) and all(any(t in TERMINALS for t in m.tiles) for m in melds) and (pair in TERMINALS)
-    is_qingyao = all(t in TERMINALS for t in all_tiles)
-
-    # 截圖規則：不能重複計算類似番數，例如缺一門不能計無字
-    implies_no_honor = is_qingyise or is_queyimen or is_duanyao or is_quandaiyao_no_honor or is_qingyao
-
-    if is_no_flower and not has_honors and is_pinghu:
-        fans.append(("無字花平胡(大平糊)", 10))
+    if not has_any_flower and not has_honors and is_pinghu:
+        hand_pattern_fans.append(("無字花大平糊", 15))
         skip_no_flower = True
-    elif is_no_flower and not has_honors:
-        fans.append(("無字花", 5))
+    elif not has_any_flower and not has_honors:
+        hand_pattern_fans.append(("無字花", 5))
         skip_no_flower = True
         if is_pinghu:
-            fans.append(("平胡", 3))
+            hand_pattern_fans.append(("平糊", 5))
     else:
         if is_pinghu:
-            fans.append(("平胡", 3))
-        if not has_honors and not implies_no_honor:
-            fans.append(("無字", 1))
-
-    fans.extend(evaluate_common_context_fans(ctx, is_menqing, skip_no_flower=skip_no_flower))
+            hand_pattern_fans.append(("平糊", 5))
+        if not has_honors:
+            hand_pattern_fans.append(("無字", 1))
 
     # --------------------------------------------------
-    # B. 將眼 (1番)：以一對二、五或八做眼
+    # B. 象眼 (2番)：以一對 2、5 或 8 做眼
     # --------------------------------------------------
     if is_suit(pair) and get_num(pair) in (2, 5, 8):
-        fans.append(("將眼", 1))
+        hand_pattern_fans.append(("象眼", 2))
 
     # --------------------------------------------------
     # C. 明槓 (1番) / 暗槓 (2番)
@@ -436,231 +446,531 @@ def evaluate_standard_decomposition(
     open_kongs = sum(1 for m in kongs if m.is_open)
     concealed_kongs = sum(1 for m in kongs if not m.is_open)
     if open_kongs > 0:
-        fans.append((f"明槓 x{open_kongs}", 1 * open_kongs))
+        hand_pattern_fans.append((f"明槓 x{open_kongs}", 1 * open_kongs))
     if concealed_kongs > 0:
-        fans.append((f"暗槓 x{concealed_kongs}", 2 * concealed_kongs))
+        hand_pattern_fans.append((f"暗槓 x{concealed_kongs}", 2 * concealed_kongs))
 
     # --------------------------------------------------
-    # D. 字牌刻子與三元 / 四喜系列
+    # D. 正風(2) / 爛風(1) / 三元牌(2) & 小/大三風、小/大四喜、小/大三元
     # --------------------------------------------------
     dragon_pongs = [m for m in pongs if m.tiles[0] in DRAGONS]
     wind_pongs = [m for m in pongs if m.tiles[0] in WINDS]
 
     if len(dragon_pongs) == 3:
-        fans.append(("大三元", 40))
+        hand_pattern_fans.append(("大三元", 60))
     elif len(dragon_pongs) == 2 and pair in DRAGONS:
-        fans.append(("小三元", 20))
+        hand_pattern_fans.append(("小三元", 30))
     else:
         for m in dragon_pongs:
-            fans.append((f"碰出{TILE_NAMES[m.tiles[0]]}", 2))
+            hand_pattern_fans.append((f"三元牌({TILE_NAMES[m.tiles[0]]})", 2))
 
     if len(wind_pongs) == 4:
-        fans.append(("大四喜", 80))
+        hand_pattern_fans.append(("大四喜", 100))
     elif len(wind_pongs) == 3 and pair in WINDS:
-        fans.append(("小四喜", 60))
+        hand_pattern_fans.append(("小四喜", 80))
     elif len(wind_pongs) == 3:
-        fans.append(("大三風", 30))
+        hand_pattern_fans.append(("大三風", 40))
     elif len(wind_pongs) == 2 and pair in WINDS:
-        fans.append(("小三風", 15))
+        hand_pattern_fans.append(("小三風", 20))
     else:
         for m in wind_pongs:
             w = m.tiles[0]
             if w == ctx.seat_wind:
-                fans.append((f"碰出{TILE_NAMES[w]}(正風)", 2))
+                hand_pattern_fans.append((f"正風({TILE_NAMES[w]})", 2))
             else:
-                fans.append((f"碰出{TILE_NAMES[w]}(非正風)", 1))
+                hand_pattern_fans.append((f"爛風({TILE_NAMES[w]})", 1))
 
     # --------------------------------------------------
-    # E. 對對胡 / 間間胡 / 暗刻 / 全求人 / 半求人
+    # E. 全相逢 (30番) 預先檢查 (備註：全相逢必須3+2, if 555666777則不計三暗刻三姊妹)
     # --------------------------------------------------
-    # 截圖二暗刻解說：明槓、暗槓或在自己手上三隻一樣的牌叫做暗刻
-    concealed_pongs = [m for m in pongs if (not m.is_open) or m.type == 'kong']
-
-    is_jianjianhu = (len(pongs) == 5 and is_menqing and effective_zimo)
-    if is_jianjianhu:
-        fans.append(("間間胡", 100))
-    else:
-        if len(pongs) == 5:
-            fans.append(("對對胡", 30))
-        if len(concealed_pongs) == 5:
-            fans.append(("五暗刻", 80))
-        elif len(concealed_pongs) == 4:
-            fans.append(("四暗刻", 30))
-        elif len(concealed_pongs) == 3:
-            fans.append(("三暗刻", 10))
-        elif len(concealed_pongs) == 2:
-            fans.append(("二暗刻", 3))
-
-    if all(m.is_open for m in melds):
-        if effective_zimo:
-            fans.append(("半求人", 8))
-        else:
-            fans.append(("全求人", 15))
-
-    # --------------------------------------------------
-    # F. 順子系列：明暗龍 / 明暗雜龍 / 老少 / 一般高 / 相逢 / 同順
-    # --------------------------------------------------
-    has_dragon_straight = False
-    for suit in (1, 2, 3):
-        s_123 = [i for i, m in enumerate(chows) if m.tiles[0] == suit * 10 + 1]
-        s_456 = [i for i, m in enumerate(chows) if m.tiles[0] == suit * 10 + 4]
-        s_789 = [i for i, m in enumerate(chows) if m.tiles[0] == suit * 10 + 7]
-        if s_123 and s_456 and s_789:
-            has_dragon_straight = True
-            is_concealed_dragon = any(not chows[i].is_open for i in s_123) and \
-                                  any(not chows[i].is_open for i in s_456) and \
-                                  any(not chows[i].is_open for i in s_789)
-            if is_concealed_dragon:
-                fans.append(("暗龍", 20))
-            else:
-                fans.append(("明龍", 10))
-            break
-
-    if not has_dragon_straight:
-        for p_suits in permutations((1, 2, 3)):
-            c_123 = [i for i, m in enumerate(chows) if m.tiles[0] == p_suits[0] * 10 + 1]
-            c_456 = [i for i, m in enumerate(chows) if m.tiles[0] == p_suits[1] * 10 + 4]
-            c_789 = [i for i, m in enumerate(chows) if m.tiles[0] == p_suits[2] * 10 + 7]
-            if c_123 and c_456 and c_789:
-                is_concealed_mixed = any(not chows[i].is_open for i in c_123) and \
-                                     any(not chows[i].is_open for i in c_456) and \
-                                     any(not chows[i].is_open for i in c_789)
-                if is_concealed_mixed:
-                    fans.append(("暗雜龍", 15))
-                else:
-                    fans.append(("明雜龍", 8))
-                break
-
-    # 老少 (2番)：同門 123+789 或 111+999
-    for suit in (1, 2, 3):
-        has_123_456_789 = any(m.tiles[0] == suit * 10 + 1 for m in chows) and \
-                          any(m.tiles[0] == suit * 10 + 4 for m in chows) and \
-                          any(m.tiles[0] == suit * 10 + 7 for m in chows)
-        if not has_123_456_789:
-            chow_123 = sum(1 for m in chows if m.tiles[0] == suit * 10 + 1)
-            chow_789 = sum(1 for m in chows if m.tiles[0] == suit * 10 + 7)
-            for _ in range(min(chow_123, chow_789)):
-                fans.append(("老少(順子)", 2))
-
-        pong_111 = any(m.tiles[0] == suit * 10 + 1 for m in pongs)
-        pong_999 = any(m.tiles[0] == suit * 10 + 9 for m in pongs)
-        if pong_111 and pong_999:
-            fans.append(("老少(刻子)", 2))
-
-    # 四同順(20) / 五同順(40) vs 一般高/三般高/四般高 & 二相逢/三相逢
     chow_by_num: Dict[int, List[Meld]] = {}
     for m in chows:
         chow_by_num.setdefault(get_num(m.tiles[0]), []).append(m)
 
-    for num, m_list in chow_by_num.items():
-        cnt = len(m_list)
-        suit_counter = Counter(get_suit(m.tiles[0]) for m in m_list)
-
-        if cnt == 5:
-            fans.append(("五同順", 40))
-        elif cnt == 4:
-            if len(suit_counter) == 1:
-                fans.append(("四般高", 30))
-            else:
-                fans.append(("四同順", 20))
-        else:
-            for s, s_cnt in suit_counter.items():
-                if s_cnt == 3:
-                    fans.append(("三般高", 15))
-                elif s_cnt == 2:
-                    fans.append(("一般高", 3))
-
-            distinct_suits = len(suit_counter)
-            if distinct_suits == 3:
-                fans.append(("三相逢(順子)", 10))
-            elif distinct_suits == 2:
-                fans.append(("二相逢(順子)", 2))
+    is_quanxiangfeng = False
+    if len(chows) == 5 and len(chow_by_num) == 2:
+        counts_per_num = sorted(len(v) for v in chow_by_num.values())
+        # 必須為 3 組同數順子 (跨門相逢) + 2 組同數順子 (跨門相逢)
+        suits_per_num = [len({get_suit(m.tiles[0]) for m in v}) for v in chow_by_num.values()]
+        if counts_per_num == [2, 3] and sorted(suits_per_num) == [2, 3]:
+            is_quanxiangfeng = True
+            hand_pattern_fans.append(("全相逢", 30))
 
     # --------------------------------------------------
-    # G. 刻子系列：二兄弟 / 小三兄弟 / 大三兄弟 & 小三姊妹 / 大三姊妹
+    # F. 對對糊(30) / 兩~五暗刻(5/10/30/100) / 坎坎糊(160) / 全求人(20) / 半求人(10)
+    # 備註規定：「五暗刻, 坎坎糊不再計算對對糊, 坎坎糊可以食單吊打出」
+    # --------------------------------------------------
+    concealed_pongs = [m for m in pongs if not m.is_open]
+    # 若全為刻子且門前清：自摸 或 單吊(獨獨)食人打出 -> 坎坎糊 (160番)
+    is_kankanhu = (len(pongs) == 5 and is_menqing and (effective_zimo or ctx.wait_type == "dudu"))
+
+    if is_kankanhu:
+        hand_pattern_fans.append(("坎坎糊", 160))
+    elif len(concealed_pongs) == 5:
+        hand_pattern_fans.append(("五暗刻", 100))
+    else:
+        if len(pongs) == 5:
+            hand_pattern_fans.append(("對對糊", 30))
+        if not is_quanxiangfeng:
+            if len(concealed_pongs) == 4:
+                hand_pattern_fans.append(("四暗刻", 30))
+            elif len(concealed_pongs) == 3:
+                hand_pattern_fans.append(("三暗刻", 10))
+            elif len(concealed_pongs) == 2:
+                hand_pattern_fans.append(("兩暗刻", 5))
+
+    if all(m.is_open and m.type != 'kong' or (m.type == 'kong' and m.is_open) for m in melds):
+        if effective_zimo:
+            hand_pattern_fans.append(("半求人", 10))
+        else:
+            hand_pattern_fans.append(("全求人", 20))
+
+    # --------------------------------------------------
+    # G. 通天清龍(240) / 通天雜龍(100) / 清龍 10(20) / 雜龍 8(15) / 老少上(3) / 老少碰(5)
+    # 備註規定：「任何牌型都係有大計大 i.e. 12344556789食3, 計暗龍不計假獨, 因為假獨沒有暗龍只有明龍」
+    # --------------------------------------------------
+    tongtian_type = check_tongtian_dragon(melds, pair)
+    if tongtian_type == "通天清龍":
+        hand_pattern_fans.append(("通天清龍", 240))
+    elif tongtian_type == "通天雜龍":
+        hand_pattern_fans.append(("通天雜龍", 100))
+    else:
+        # 檢查清龍 10(20) 與 雜龍 8(15)
+        has_pure_dragon = False
+        for suit in (1, 2, 3):
+            s_123 = [m for m in chows if m.tiles[0] == suit * 10 + 1]
+            s_456 = [m for m in chows if m.tiles[0] == suit * 10 + 4]
+            s_789 = [m for m in chows if m.tiles[0] == suit * 10 + 7]
+            if s_123 and s_456 and s_789:
+                has_pure_dragon = True
+                is_dark = any(not m.is_open for m in s_123) and \
+                          any(not m.is_open for m in s_456) and \
+                          any(not m.is_open for m in s_789)
+                if is_dark:
+                    hand_pattern_fans.append(("清龍(暗)", 20))
+                else:
+                    hand_pattern_fans.append(("清龍", 10))
+                break
+
+        if not has_pure_dragon:
+            for p_suits in permutations((1, 2, 3)):
+                c_123 = [m for m in chows if m.tiles[0] == p_suits[0] * 10 + 1]
+                c_456 = [m for m in chows if m.tiles[0] == p_suits[1] * 10 + 4]
+                c_789 = [m for m in chows if m.tiles[0] == p_suits[2] * 10 + 7]
+                if c_123 and c_456 and c_789:
+                    is_dark = any(not m.is_open for m in c_123) and \
+                              any(not m.is_open for m in c_456) and \
+                              any(not m.is_open for m in c_789)
+                    if is_dark:
+                        hand_pattern_fans.append(("雜龍(暗)", 15))
+                    else:
+                        hand_pattern_fans.append(("雜龍", 8))
+                    break
+
+    # 老少上 (3番) / 老少碰 (5番)
+    for suit in (1, 2, 3):
+        c123 = sum(1 for m in chows if m.tiles[0] == suit * 10 + 1)
+        c789 = sum(1 for m in chows if m.tiles[0] == suit * 10 + 7)
+        # 若已成同門清龍/通天清龍則不重複計老少上，否則有幾多對計幾多
+        has_suit_dragon = any(m.tiles[0] == suit * 10 + 1 for m in chows) and \
+                          any(m.tiles[0] == suit * 10 + 4 for m in chows) and \
+                          any(m.tiles[0] == suit * 10 + 7 for m in chows)
+        if not has_suit_dragon:
+            for _ in range(min(c123, c789)):
+                hand_pattern_fans.append(("老少上", 3))
+
+        p111 = any(m.tiles[0] == suit * 10 + 1 for m in pongs)
+        p999 = any(m.tiles[0] == suit * 10 + 9 for m in pongs)
+        if p111 and p999:
+            hand_pattern_fans.append(("老少碰", 5))
+
+    # --------------------------------------------------
+    # H. 一般高(5)/三般高(20)/四般高(40) & 相逢(3)/三相逢 10(20)
+    # --------------------------------------------------
+    for num, m_list in chow_by_num.items():
+        suit_groups: Dict[int, List[Meld]] = {}
+        for m in m_list:
+            suit_groups.setdefault(get_suit(m.tiles[0]), []).append(m)
+
+        # 同門同數字順子：一般高(5) / 三般高(20) / 四般高(40)
+        for s, sm_list in suit_groups.items():
+            scnt = len(sm_list)
+            if scnt == 4:
+                hand_pattern_fans.append(("四般高", 40))
+            elif scnt == 3:
+                hand_pattern_fans.append(("三般高", 20))
+            elif scnt == 2:
+                hand_pattern_fans.append(("一般高", 5))
+
+        # 跨門同數字順子：相逢(3) / 三相逢 10(20) (若已計全相逢 30 則不重複計單項相逢)
+        if not is_quanxiangfeng:
+            distinct_suits = len(suit_groups)
+            if distinct_suits == 3:
+                is_dark_3xf = all(any(not m.is_open for m in sm_list) for sm_list in suit_groups.values())
+                if is_dark_3xf:
+                    hand_pattern_fans.append(("三相逢(暗)", 20))
+                else:
+                    hand_pattern_fans.append(("三相逢", 10))
+            elif distinct_suits == 2:
+                # 若其中一門有2組(例如萬123x2 + 筒123x1)，按複式計算可組成相逢
+                suits_list = list(suit_groups.values())
+                pair_combinations = len(suits_list[0]) * len(suits_list[1])
+                for _ in range(pair_combinations):
+                    hand_pattern_fans.append(("相逢", 3))
+
+    # --------------------------------------------------
+    # I. 步步高系列：全步高(40) / 單色步步高 10(20) / 三色步步高 5(10)
+    # --------------------------------------------------
+    if len(chows) == 5:
+        sorted_start_nums = sorted(get_num(m.tiles[0]) for m in chows)
+        if all(sorted_start_nums[i+1] == sorted_start_nums[i] + 1 for i in range(4)):
+            hand_pattern_fans.append(("全步高", 40))
+        else:
+            hand_pattern_fans.extend(_eval_3_step_bubugao(chows))
+    elif len(chows) >= 3:
+        hand_pattern_fans.extend(_eval_3_step_bubugao(chows))
+
+    # --------------------------------------------------
+    # J. 刻子系列：兩姊妹(5)/小三姊妹(10)/大三姊妹(20) & 兩兄弟(5)/小三兄弟(10)/大三兄弟(20)
     # --------------------------------------------------
     suit_pongs = [m for m in pongs if is_suit(m.tiles[0])]
 
+    # 1. 兄弟 (不同門但同數字的刻子)
     pongs_by_num: Dict[int, Set[int]] = {}
     for m in suit_pongs:
         pongs_by_num.setdefault(get_num(m.tiles[0]), set()).add(get_suit(m.tiles[0]))
 
     for num, suits_set in pongs_by_num.items():
         if len(suits_set) == 3:
-            fans.append(("大三兄弟(刻子)", 15))
+            hand_pattern_fans.append(("大三兄弟", 20))
         elif len(suits_set) == 2:
             if is_suit(pair) and get_num(pair) == num and get_suit(pair) not in suits_set:
-                fans.append(("小三兄弟(刻子)", 10))
+                hand_pattern_fans.append(("小三兄弟", 10))
             else:
-                fans.append(("二兄弟(刻子)", 3))
+                hand_pattern_fans.append(("兩兄弟", 5))
 
-    for suit in (1, 2, 3):
-        nums_in_suit = sorted(get_num(m.tiles[0]) for m in suit_pongs if get_suit(m.tiles[0]) == suit)
-        has_big_sisters = False
-        for i in range(len(nums_in_suit) - 2):
-            if nums_in_suit[i+1] == nums_in_suit[i] + 1 and nums_in_suit[i+2] == nums_in_suit[i] + 2:
-                fans.append(("大三姊妹", 15))
-                has_big_sisters = True
-                break
-        if not has_big_sisters and is_suit(pair) and get_suit(pair) == suit:
-            pair_num = get_num(pair)
-            for i in range(len(nums_in_suit)):
-                for j in range(i + 1, len(nums_in_suit)):
-                    trio = sorted([nums_in_suit[i], nums_in_suit[j], pair_num])
+    # 2. 姊妹 (同門且數字相連的刻子)
+    if not is_quanxiangfeng:
+        for suit in (1, 2, 3):
+            nums_in_suit = sorted(get_num(m.tiles[0]) for m in suit_pongs if get_suit(m.tiles[0]) == suit)
+            if not nums_in_suit:
+                continue
+            # 檢查是否有 3 連刻 (大三姊妹 20)
+            used_in_3_sisters: Set[int] = set()
+            for i in range(len(nums_in_suit) - 2):
+                if nums_in_suit[i+1] == nums_in_suit[i] + 1 and nums_in_suit[i+2] == nums_in_suit[i] + 2:
+                    hand_pattern_fans.append(("大三姊妹", 20))
+                    used_in_3_sisters.update([nums_in_suit[i], nums_in_suit[i+1], nums_in_suit[i+2]])
+
+            # 檢查未參與大三姊妹的相連刻子：小三姊妹(10) 或 兩姊妹(5)
+            rem_nums = [n for n in nums_in_suit if n not in used_in_3_sisters]
+            pair_matches_suit = is_suit(pair) and get_suit(pair) == suit
+            pair_num = get_num(pair) if pair_matches_suit else -99
+
+            matched_small_sisters = False
+            if pair_matches_suit and len(rem_nums) >= 2:
+                for c_pair in combinations(rem_nums, 2):
+                    trio = sorted([c_pair[0], c_pair[1], pair_num])
                     if trio[1] == trio[0] + 1 and trio[2] == trio[1] + 1:
-                        fans.append(("小三姊妹", 8))
+                        hand_pattern_fans.append(("小三姊妹", 10))
+                        matched_small_sisters = True
                         break
+            if not matched_small_sisters and len(rem_nums) >= 2:
+                for i in range(len(rem_nums) - 1):
+                    if rem_nums[i+1] == rem_nums[i] + 1:
+                        hand_pattern_fans.append(("兩姊妹", 5))
 
     # --------------------------------------------------
-    # H. 四歸系列：四歸一(5) / 四歸二(10) / 四歸四(20)
+    # K. 四歸系列：四歸一 5(10) / 四歸二 10(20) / 四歸四 20(40)
     # --------------------------------------------------
     for tile, cnt in tile_counts_non_kong.items():
         if cnt == 4:
             in_pair = (pair == tile)
-            in_pong = any(m.type == 'pong' and m.tiles[0] == tile for m in melds)
-            chow_appearances = sum(1 for m in chows if tile in m.tiles)
+            matching_pongs = [m for m in melds if m.type == 'pong' and m.tiles[0] == tile]
+            matching_chows = [m for m in chows if tile in m.tiles]
 
-            if chow_appearances == 4:
-                fans.append((f"四歸四({TILE_NAMES[tile]})", 20))
-            elif in_pair and chow_appearances == 2:
-                fans.append((f"四歸二({TILE_NAMES[tile]})", 10))
-            elif in_pong and chow_appearances == 1:
-                fans.append((f"四歸一({TILE_NAMES[tile]})", 5))
+            if len(matching_chows) == 4:
+                is_dark = all(not m.is_open for m in matching_chows)
+                hand_pattern_fans.append((f"四歸四{'(暗)' if is_dark else ''}({TILE_NAMES[tile]})", 40 if is_dark else 20))
+            elif in_pair and len(matching_chows) == 2:
+                is_dark = all(not m.is_open for m in matching_chows)
+                hand_pattern_fans.append((f"四歸二{'(暗)' if is_dark else ''}({TILE_NAMES[tile]})", 20 if is_dark else 10))
+            elif len(matching_pongs) == 1 and len(matching_chows) == 1:
+                is_dark = (not matching_pongs[0].is_open) and (not matching_chows[0].is_open)
+                hand_pattern_fans.append((f"四歸一{'(暗)' if is_dark else ''}({TILE_NAMES[tile]})", 10 if is_dark else 5))
 
     # --------------------------------------------------
-    # I. 門類與色系：清一色(80) / 混一色(30) / 五門齊(10) / 缺一門(5)
+    # L. 門類與色系：字一色(120) / 清一色(80) / 混一色(30) / 七門齊(20) / 五門齊(15) / 缺一門(5)
     # --------------------------------------------------
-    if is_qingyise:
-        fans.append(("清一色", 80))
+    if len(suits_present) == 0 and has_honors:
+        hand_pattern_fans.append(("字一色", 120))
+    elif len(suits_present) == 1 and not has_honors:
+        hand_pattern_fans.append(("清一色", 80))
     elif len(suits_present) == 1 and has_honors:
-        fans.append(("混一色", 30))
+        hand_pattern_fans.append(("混一色", 30))
     elif len(suits_present) == 3 and has_winds and has_dragons:
-        fans.append(("五門齊", 10))
-    elif is_queyimen:
-        fans.append(("缺一門", 5))
+        if ctx.has_season_grass and ctx.has_plant_flower:
+            hand_pattern_fans.append(("七門齊", 20))
+        else:
+            hand_pattern_fans.append(("五門齊", 15))
+    elif len(suits_present) == 2:
+        hand_pattern_fans.append(("缺一門", 5))
 
     # --------------------------------------------------
-    # J. 么九系列：斷么(5) / 全帶混么(10) / 全帶么(15) / 混么(30) / 清么(80)
+    # M. 數字範圍與么九系列：
+    # 大於5(60) / 小於5(60) / 缺5(10) / 斷么(5) / 混帶么(20) / 全帶么(50) / 混么(80) / 清么(100) / 混帶X(20) / 全帶X(60)
     # --------------------------------------------------
-    if is_duanyao:
-        fans.append(("斷么", 5))
-    elif is_qingyao:
-        fans.append(("清么", 80))
-    elif all(t in YAOJIU for t in all_tiles):
-        fans.append(("混么", 30))
+    # 1. 大於5 (60番) / 小於5 (60番) - 備註：大於5/小於5不可以有番子
+    if not has_honors:
+        all_nums = [get_num(t) for t in all_tiles]
+        if all(n > 5 for n in all_nums):
+            hand_pattern_fans.append(("大於5", 60))
+        elif all(1 <= n < 5 for n in all_nums):
+            hand_pattern_fans.append(("小於5", 60))
+
+    # 2. 缺5 (10番) - 全副牌沒有任何 5萬/5筒/5索
+    if all(get_num(t) != 5 for t in all_tiles):
+        hand_pattern_fans.append(("缺5", 10))
+
+    # 3. 斷么(5) / 清么(100) / 混么(80) / 全帶么(50) / 混帶么(20)
+    if all(t not in YAOJIU for t in all_tiles):
+        hand_pattern_fans.append(("斷么", 5))
+    elif all(t in TERMINALS for t in all_tiles):
+        hand_pattern_fans.append(("清么", 100))
+    elif all(t in YAOJIU for t in all_tiles) and len(suits_present) > 0:
+        hand_pattern_fans.append(("混么", 80))
     else:
         every_meld_has_yaojiu = all(any(t in YAOJIU for t in m.tiles) for m in melds) and (pair in YAOJIU)
         if every_meld_has_yaojiu:
             if has_honors:
-                fans.append(("全帶混么", 10))
+                hand_pattern_fans.append(("混帶么", 20))
             else:
-                fans.append(("全帶么", 15))
+                hand_pattern_fans.append(("全帶么", 50))
 
-    return apply_dealer_and_jihu(fans, ctx)
+    # 4. 全帶X (60番) / 混帶X (20番，備註：混滿庭芳可以計3次)
+    suit_meld_num_sets = [{get_num(t) for t in m.tiles} for m in melds if is_suit(m.tiles[0])]
+    if is_suit(pair):
+        suit_meld_num_sets.append({get_num(pair)})
+
+    if suit_meld_num_sets:
+        common_x_nums = sorted(set.intersection(*suit_meld_num_sets))
+        for x_num in common_x_nums:
+            if not has_honors:
+                # 若為 1 或 9 且無順子，可能已計清么；但若有順子(如全123+111+11眼)，計全帶一(60)
+                hand_pattern_fans.append((f"全帶{x_num} (滿庭芳)", 60))
+            else:
+                hand_pattern_fans.append((f"混帶{x_num} (混滿庭芳)", 20))
+
+    # --------------------------------------------------
+    # N. 檢查是否觸發【大雞糊 (45番)】
+    # 備註規定：「大雞糊可以自摸, 叮, 爛花, 無花, 4/7/10子, 只要17隻牌計唔到番就得」
+    # 「任何牌型都係有大計大 i.e. 12344556789食3, 計暗龍不計假獨」
+    # --------------------------------------------------
+    # 若已計清龍(暗)或雜龍(暗)，且玩家誤勾了假獨，依備註自動拿掉假獨
+    effective_ctx_wait = ctx.wait_type
+    if any(name in ("清龍(暗)", "雜龍(暗)") for name, _ in hand_pattern_fans) and effective_ctx_wait == "jiadu":
+        effective_ctx_wait = "normal"
+
+    # 判斷 17 隻牌本身是否計唔到任何番 (即 hand_pattern_fans 為空，且叫胡方式不是對碰/獨獨/假獨，亦無門清5番)
+    # 注意：無花(1)、爛花(1)、自摸(1)、叮(5)、4/7/10隻內 屬於牌局外在狀態，大雞糊可照計並疊加！
+    if len(hand_pattern_fans) == 0 and not is_menqing and effective_ctx_wait == "normal":
+        hand_pattern_fans.append(("大雞糊 (17隻牌計唔到番)", 45))
+
+    # 加上共通花牌與狀態番
+    modified_ctx = GameContext(**{**ctx.__dict__, "wait_type": effective_ctx_wait})
+    context_fans = evaluate_context_and_flower_fans(
+        modified_ctx,
+        is_menqing=is_menqing,
+        is_special_non_menqing_hand=False,
+        skip_no_flower=skip_no_flower
+    )
+
+    all_fans = hand_pattern_fans + context_fans
+    return finalize_with_dealer(all_fans, ctx)
+
+
+def _eval_3_step_bubugao(chows: List[Meld]) -> List[Tuple[str, int]]:
+    """輔助計算【單色步步高 10(20)】與【三色步步高 5(10)】（順子遞增 1）"""
+    res: List[Tuple[str, int]] = []
+    # 1. 單色步步高 (同門 3 組順子遞增 1)
+    for suit in (1, 2, 3):
+        s_chows = [m for m in chows if get_suit(m.tiles[0]) == suit]
+        if len(s_chows) >= 3:
+            for comb in combinations(s_chows, 3):
+                nums = sorted(get_num(m.tiles[0]) for m in comb)
+                if nums[1] == nums[0] + 1 and nums[2] == nums[1] + 1:
+                    is_dark = all(not m.is_open for m in comb)
+                    res.append(("單色步步高(暗)" if is_dark else "單色步步高", 20 if is_dark else 10))
+    # 2. 三色步步高 (三門各 1 組順子遞增 1)
+    for comb in combinations(chows, 3):
+        suits = {get_suit(m.tiles[0]) for m in comb}
+        if len(suits) == 3:
+            nums = sorted(get_num(m.tiles[0]) for m in comb)
+            if nums[1] == nums[0] + 1 and nums[2] == nums[1] + 1:
+                is_dark = all(not m.is_open for m in comb)
+                res.append(("三色步步高(暗)" if is_dark else "三色步步高", 10 if is_dark else 5))
+    return res
 
 
 # ==========================================
-# 5. 總入口函數：自動拆牌、找最高番數並計算金額
+# 6. 特殊牌型專屬評估器 (嚦咕 / 十六不搭 / 十三么)
+# ==========================================
+
+def evaluate_liguligu_hand(
+    eight_pairs: List[int],
+    triplet_tile: int,
+    all_tiles: List[int],
+    ctx: GameContext
+) -> Tuple[int, List[Tuple[str, int]]]:
+    """
+    評估【嚦咕嚦咕 (45番) / 8飛嚦咕嚦咕 (55番)】及其專屬備註規則：
+    - 嚦咕不計門清、一摸八、門清叮
+    - 嚦咕可以計三元、三風、四喜，番數除一半
+    - 嚦咕 3/4/5/6/7 連對 -> 5/10/20/30/60 番
+    - 嚦咕有幾多象眼(2/5/8對)計幾多 (每對 2 番)
+    """
+    fans: List[Tuple[str, int]] = []
+    if ctx.special_wait_variant == "8fei_ligu":
+        fans.append(("8飛嚦咕嚦咕", 55))
+    else:
+        fans.append(("嚦咕嚦咕", 45))
+
+    suits_present = {get_suit(t) for t in all_tiles if is_suit(t)}
+    has_winds = any(t in WINDS for t in all_tiles)
+    has_dragons = any(t in DRAGONS for t in all_tiles)
+    has_honors = has_winds or has_dragons
+    total_flowers = ctx.good_flowers + ctx.bad_flowers + (ctx.flower_sets * 4)
+    has_any_flower = (total_flowers > 0) or ctx.has_season_grass or ctx.has_plant_flower
+
+    # 無字 / 無花 / 無字花
+    skip_no_flower = False
+    if not has_any_flower and not has_honors:
+        fans.append(("無字花", 5))
+        skip_no_flower = True
+    elif not has_honors:
+        fans.append(("無字", 1))
+
+    # 1. 象眼：有幾多對 2/5/8 計幾多 (每對 2 番)
+    xiangyan_cnt = sum(1 for t in eight_pairs if is_suit(t) and get_num(t) in (2, 5, 8))
+    if xiangyan_cnt > 0:
+        fans.append((f"象眼 x{xiangyan_cnt}對", 2 * xiangyan_cnt))
+
+    # 2. 嚦咕 3/4/5/6/7 連對 (5/10/20/30/60番)
+    streak_score_map = {3: 5, 4: 10, 5: 20, 6: 30, 7: 60, 8: 60}
+    for suit in (1, 2, 3):
+        suit_nums = sorted(get_num(t) for t in set(eight_pairs) if get_suit(t) == suit)
+        cur_len = 0
+        for i, n in enumerate(suit_nums):
+            if i == 0 or n == suit_nums[i - 1] + 1:
+                cur_len += 1
+            else:
+                if cur_len >= 3:
+                    fans.append((f"嚦咕{cur_len}連對", streak_score_map[min(cur_len, 7)]))
+                cur_len = 1
+        if cur_len >= 3:
+            fans.append((f"嚦咕{cur_len}連對", streak_score_map[min(cur_len, 7)]))
+
+    # 3. 嚦咕計三元/三風/四喜，番數除一半 (刻子那隻視為刻，對子視為眼/對)
+    distinct_dragons = {t for t in eight_pairs if t in DRAGONS}
+    distinct_winds = {t for t in eight_pairs if t in WINDS}
+    if len(distinct_dragons) == 3:
+        if triplet_tile in DRAGONS:
+            fans.append(("大三元(嚦咕減半)", 30))
+        else:
+            fans.append(("小三元(嚦咕減半)", 15))
+    if len(distinct_winds) == 4:
+        if triplet_tile in WINDS:
+            fans.append(("大四喜(嚦咕減半)", 50))
+        else:
+            fans.append(("小四喜(嚦咕減半)", 40))
+    elif len(distinct_winds) == 3:
+        if triplet_tile in WINDS:
+            fans.append(("大三風(嚦咕減半)", 20))
+        else:
+            fans.append(("小三風(嚦咕減半)", 10))
+
+    # 4. 門類與數字範圍番種
+    if len(suits_present) == 0 and has_honors:
+        fans.append(("字一色", 120))
+    elif len(suits_present) == 1 and not has_honors:
+        fans.append(("清一色", 80))
+    elif len(suits_present) == 1 and has_honors:
+        fans.append(("混一色", 30))
+    elif len(suits_present) == 3 and has_winds and has_dragons:
+        if ctx.has_season_grass and ctx.has_plant_flower:
+            fans.append(("七門齊", 20))
+        else:
+            fans.append(("五門齊", 15))
+    elif len(suits_present) == 2:
+        fans.append(("缺一門", 5))
+
+    if not has_honors:
+        all_nums = [get_num(t) for t in all_tiles]
+        if all(n > 5 for n in all_nums):
+            fans.append(("大於5", 60))
+        elif all(1 <= n < 5 for n in all_nums):
+            fans.append(("小於5", 60))
+
+    if all(get_num(t) != 5 for t in all_tiles):
+        fans.append(("缺5", 10))
+    if all(t not in YAOJIU for t in all_tiles):
+        fans.append(("斷么", 5))
+    elif all(t in TERMINALS for t in all_tiles):
+        fans.append(("清么", 100))
+    elif all(t in YAOJIU for t in all_tiles) and len(suits_present) > 0:
+        fans.append(("混么", 80))
+
+    fans.extend(evaluate_context_and_flower_fans(ctx, is_menqing=True, is_special_non_menqing_hand=True, skip_no_flower=skip_no_flower))
+    return finalize_with_dealer(fans, ctx)
+
+
+def evaluate_shiliubuda_hand(
+    pair_tile: int,
+    suit_sets: Dict[int, Tuple[int, int, int]],
+    ctx: GameContext
+) -> Tuple[int, List[Tuple[str, int]]]:
+    """
+    評估【十六不搭 (50番) / 16飛十六不搭 (60番)】及其專屬備註規則：
+    - 支援 不搭三相逢 10(20) & 不搭龍 10(20)
+    - 必含五門齊(15) 或 七門齊(20)
+    - 備註：不搭可計象眼 (2番)，不計門清、一摸八、門清叮
+    """
+    fans: List[Tuple[str, int]] = []
+    if ctx.special_wait_variant == "16fei_buda":
+        fans.append(("16飛十六不搭", 60))
+    else:
+        fans.append(("十六不搭", 50))
+
+    # 五門齊(15) / 七門齊(20)
+    if ctx.has_season_grass and ctx.has_plant_flower:
+        fans.append(("七門齊", 20))
+    else:
+        fans.append(("五門齊", 15))
+
+    # 不搭三相逢 10(20) vs 不搭龍 10(20)
+    t1, t2, t3 = suit_sets[1], suit_sets[2], suit_sets[3]
+    is_dark_buda = ctx.buda_dragon_is_concealed
+    if t1 == t2 == t3:
+        fans.append(("不搭三相逢(暗)" if is_dark_buda else "不搭三相逢", 20 if is_dark_buda else 10))
+    elif set(t1) | set(t2) | set(t3) == {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+        # 例如三門分別為 (1,4,7), (2,5,8), (3,6,9) 湊齊 1~9 不搭雜龍
+        fans.append(("不搭龍(暗)" if is_dark_buda else "不搭龍", 20 if is_dark_buda else 10))
+
+    # 象眼 (2番)
+    if is_suit(pair_tile) and get_num(pair_tile) in (2, 5, 8):
+        fans.append(("象眼", 2))
+
+    # 缺5 (10番)
+    all_suit_nums = set(t1) | set(t2) | set(t3)
+    if 5 not in all_suit_nums:
+        fans.append(("缺5", 10))
+
+    fans.extend(evaluate_context_and_flower_fans(ctx, is_menqing=True, is_special_non_menqing_hand=True))
+    return finalize_with_dealer(fans, ctx)
+
+
+# ==========================================
+# 7. 主入口函數：自動拆牌、找最高番數並計算金額
 # ==========================================
 
 @dataclass
@@ -680,23 +990,18 @@ def calculate_hk_tw_mahjong(
     fixed_melds: Optional[List[Meld]] = None,
     ctx: Optional[GameContext] = None
 ) -> ScoringResult:
-    """
-    港式台牌計番主入口：
-    - hand_tiles: 手牌列表 (包含最後食胡的那張牌；若無副露則應為 17 張)
-    - fixed_melds: 已落地或已固定的副露/暗槓列表 (每組算 3 張手牌額度)
-    - ctx: 牌局環境參數 (花數、自摸、莊家、底價等)
-    """
     if fixed_melds is None:
         fixed_melds = []
     if ctx is None:
         ctx = GameContext()
 
-    # 特殊情況 0：兩台花 (8隻花) 立即食胡，不須計手牌
-    if ctx.is_flower_hu_only or ctx.flower_sets == 2:
-        fans = evaluate_common_context_fans(ctx, is_menqing=True, skip_no_flower=True)
-        total_fan, fans = apply_dealer_and_jihu(fans, ctx)
+    # 特殊情況 0：七搶一 (50番) / 八仙過海 (100番) 直接食胡
+    if ctx.special_flower_hu in ("qiqiangyi", "baxianguohai"):
+        base_f = [("八仙過海 (8隻花直接食胡)", 100)] if ctx.special_flower_hu == "baxianguohai" else [("七搶一 (7搶1花胡)", 50)]
+        base_f.extend(evaluate_context_and_flower_fans(ctx, is_menqing=True, is_special_non_menqing_hand=True, skip_no_flower=True))
+        total_fan, fans = finalize_with_dealer(base_f, ctx)
         payout = total_fan * ctx.fan_price + ctx.base_price
-        return ScoringResult(True, "兩台花(花胡)", total_fan, fans, fixed_melds, None, payout)
+        return ScoringResult(True, base_f[0][0], total_fan, fans, fixed_melds, None, payout)
 
     expected_hand_len = 17 - 3 * len(fixed_melds)
     if len(hand_tiles) != expected_hand_len:
@@ -714,50 +1019,46 @@ def calculate_hk_tw_mahjong(
     candidates: List[ScoringResult] = []
     all_tiles_flat = list(hand_tiles) + [t for m in fixed_melds for t in m.tiles]
 
-    # 1. 檢查【十三么 (80番)】
+    # 1. 檢查【十三么 (120) / 13飛 (130) / 14飛 (140)】
     shisanyao_res = check_shisanyao(hand_tiles, fixed_melds)
     if shisanyao_res is not None:
         pair_tile, extra_meld = shisanyao_res
-        fans = [("十三么", 80)]
-        fans.extend(evaluate_common_context_fans(ctx, is_menqing=True))
-        total_fan, fans = apply_dealer_and_jihu(fans, ctx)
+        if ctx.special_wait_variant == "14fei_13yao":
+            fans = [("14飛十三么", 140)]
+        elif ctx.special_wait_variant == "13fei_13yao":
+            fans = [("13飛十三么", 130)]
+        else:
+            fans = [("十三么", 120)]
+
+        # 十三么必齊五門，檢查是否七門齊(20)或五門齊(15)
+        if ctx.has_season_grass and ctx.has_plant_flower:
+            fans.append(("七門齊", 20))
+        else:
+            fans.append(("五門齊", 15))
+
+        if all(get_num(t) != 5 for t in all_tiles_flat):
+            fans.append(("缺5", 10))
+
+        fans.extend(evaluate_context_and_flower_fans(ctx, is_menqing=True, is_special_non_menqing_hand=True))
+        total_fan, fans = finalize_with_dealer(fans, ctx)
         payout = total_fan * ctx.fan_price + ctx.base_price
         candidates.append(ScoringResult(True, "十三么", total_fan, fans, extra_meld, pair_tile, payout))
 
-    # 2. 檢查【十六不搭 / 九唔搭八 (40番)】
-    shiliubuda_pair = check_shiliubuda(hand_tiles, fixed_melds)
-    if shiliubuda_pair is not None:
-        fans = [("十六不搭(九唔搭八)", 40), ("五門齊", 10)]
-        if is_suit(shiliubuda_pair) and get_num(shiliubuda_pair) in (2, 5, 8):
-            fans.append(("將眼", 1))
-        fans.extend(evaluate_common_context_fans(ctx, is_menqing=True))
-        total_fan, fans = apply_dealer_and_jihu(fans, ctx)
+    # 2. 檢查【十六不搭 (50) / 16飛十六不搭 (60)】
+    buda_res = check_shiliubuda(hand_tiles, fixed_melds)
+    if buda_res is not None:
+        pair_tile, suit_sets = buda_res
+        total_fan, fans = evaluate_shiliubuda_hand(pair_tile, suit_sets, ctx)
         payout = total_fan * ctx.fan_price + ctx.base_price
-        candidates.append(ScoringResult(True, "十六不搭", total_fan, fans, [], shiliubuda_pair, payout))
+        candidates.append(ScoringResult(True, "十六不搭", total_fan, fans, [], pair_tile, payout))
 
-    # 3. 檢查【嚦咕嚦咕 (40番)】
+    # 3. 檢查【嚦咕嚦咕 (45) / 8飛嚦咕嚦咕 (55)】
     ligu_res = check_liguligu(hand_tiles, fixed_melds)
     if ligu_res is not None:
-        pairs_list, triplet_tile = ligu_res
-        fans = [("嚦咕嚦咕", 40)]
-        suits_present = {get_suit(t) for t in all_tiles_flat if is_suit(t)}
-        has_winds = any(t in WINDS for t in all_tiles_flat)
-        has_dragons = any(t in DRAGONS for t in all_tiles_flat)
-        has_honors = has_winds or has_dragons
-        if len(suits_present) == 1 and not has_honors:
-            fans.append(("清一色", 80))
-        elif len(suits_present) == 1 and has_honors:
-            fans.append(("混一色", 30))
-        elif len(suits_present) == 2:
-            fans.append(("缺一門", 5))
-        elif len(suits_present) == 3 and has_winds and has_dragons:
-            fans.append(("五門齊", 10))
-        if all(t not in YAOJIU for t in all_tiles_flat):
-            fans.append(("斷么", 5))
-        fans.extend(evaluate_common_context_fans(ctx, is_menqing=True))
-        total_fan, fans = apply_dealer_and_jihu(fans, ctx)
+        eight_pairs, triplet_tile = ligu_res
+        total_fan, fans = evaluate_liguligu_hand(eight_pairs, triplet_tile, all_tiles_flat, ctx)
         payout = total_fan * ctx.fan_price + ctx.base_price
-        candidates.append(ScoringResult(True, "嚦咕嚦咕", total_fan, fans, [Meld('pong', (triplet_tile,)*3, False)], pairs_list[0], payout))
+        candidates.append(ScoringResult(True, "嚦咕嚦咕", total_fan, fans, [Meld('pong', (triplet_tile,) * 3, False)], eight_pairs[0], payout))
 
     # 4. 檢查【標準牌型 (5組面子 + 1對眼)】
     decomps = find_standard_decompositions(hand_tiles, fixed_melds)
@@ -769,9 +1070,9 @@ def calculate_hk_tw_mahjong(
     if not candidates:
         return ScoringResult(
             is_valid_hu=False,
-            hand_pattern_name="詐胡 (未構成胡牌牌型)",
+            hand_pattern_name="詐糊 (未構成胡牌牌型)",
             total_fan=0,
-            fan_breakdown=[("詐胡罰款 (赔30番 x 3家)", 90)],
+            fan_breakdown=[("詐糊罰款 (賠每門 $100)", 0)],
             best_melds=[],
             best_pair=None,
             base_payout=0.0,
@@ -781,36 +1082,27 @@ def calculate_hk_tw_mahjong(
     return max(candidates, key=lambda r: r.total_fan)
 
 
-# ==========================================
-# 6. 拉莊與即時付錢計算器 (依截圖第 3、4 頁規則)
-# ==========================================
-
 def calculate_lazhuang_settlement(
     previous_debt: float,
     current_fan: int,
-    base_price: float = 10.0,
-    fan_price: float = 2.0,
+    base_price: float = 1.0,
+    fan_price: float = 0.1,
     event_type: str = "continue_win"
 ) -> Dict[str, float]:
-    """
-    計算港式台牌「拉莊（乘倍半 1.5x）」與「扣一半」規則：
-    - 'continue_win': 上一鋪胡出的，今鋪又胡出 -> 上一鋪輸的錢先乘 1.5 倍，再加上今鋪輸的錢
-    - 'counter_win_or_zimo': 輸錢那家自摸或反出沖俾上一鋪贏家 -> 輸了的錢可以扣回一半
-    """
-    current_hand_amount = current_fan * fan_price + base_price
+    current_hand_amount = round(current_fan * fan_price + base_price, 2)
     if event_type == "continue_win":
-        new_total_debt = (previous_debt * 1.5) + current_hand_amount
+        new_total_debt = round((previous_debt * 1.5) + current_hand_amount, 2)
         return {
             "當鋪基本金額": current_hand_amount,
             "上鋪累積金額": previous_debt,
             "拉莊後最新累積金額 (x1.5 + 今鋪)": new_total_debt
         }
     elif event_type == "counter_win_or_zimo":
-        half_deducted = previous_debt / 2.0
+        half_deducted = round(previous_debt / 2.0, 2)
         return {
             "原累積欠款": previous_debt,
             "扣減一半後應付金額": half_deducted,
             "當鋪贏回金額": current_hand_amount,
-            "淨結算 (正數為應付，負數為倒贏)": half_deducted - current_hand_amount
+            "淨結算 (正數為應付，負數為倒贏)": round(half_deducted - current_hand_amount, 2)
         }
     return {"當鋪基本金額": current_hand_amount}
