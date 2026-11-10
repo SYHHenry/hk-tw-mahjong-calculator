@@ -5,7 +5,7 @@
 
 import streamlit as st
 from collections import Counter
-from typing import List, Tuple, Optional
+from typing import List, Optional
 from hk_tw_mahjong_engine import (
     TILE_NAMES,
     UNICODE_TILES,
@@ -19,7 +19,7 @@ from hk_tw_mahjong_engine import (
 # 1. 頁面初始化與手機版 CSS 樣式優化
 # ==========================================
 st.set_page_config(
-    page_title="港式台牌計番神器",
+    page_title="港式台牌計番神器 (新章複式版)",
     page_icon="🀄",
     layout="centered",
     initial_sidebar_state="collapsed",
@@ -97,148 +97,100 @@ st.markdown(
 )
 
 # ==========================================
-# 2. 番種具體原因解說生成器 (Explanation Helper)
+# 2. 番種具體原因解說生成器 (對應最新番數表)
 # ==========================================
 def explain_fan_reason(fan_name: str, melds: List[Meld], pair: Optional[int], ctx: GameContext) -> str:
-    """根據番種名稱與當前拆牌組合，自動生成清楚的中文計番原因說明"""
-    if "無字花平胡" in fan_name:
-        return "全副 5 組皆為順子、無番子且 0 隻花（已自動合併取代：平胡3番 + 無字1番 + 無花1番）"
+    if "無字花大平糊" in fan_name:
+        return "全副 5 組皆為順子、無番子且無花牌（直接計 15 番）"
     if fan_name == "無字花":
-        return "全副牌沒有任何番子（風牌/三元牌）且 0 隻花（已自動合併取代：無字1番 + 無花1番）"
+        return "全副牌無番子且無花牌（直接計 5 番）"
     if fan_name == "無花":
-        return "全副牌沒有摸到任何花牌（0 正花、0 爛花）"
+        return "全副牌沒有摸到任何花牌或草牌（+1 番）"
     if fan_name == "無字":
-        return "全副牌只有萬、筒、索三門，沒有任何東南西北中發白"
-    if fan_name == "平胡":
-        return "5 組面子全部皆由順子（Chow）組成，沒有任何刻子或槓"
-    if fan_name == "將眼":
-        p_name = TILE_NAMES.get(pair, "") if pair else ""
-        return f"以二、五或八（本局為【{p_name}對】）作為雀頭對眼"
+        return "全副牌沒有任何番子（依備註：任何牌型如斷么、清一色等皆不走無字，照加 1 番）"
+    if fan_name == "平糊":
+        return "5 組面子全部皆由順子組成（+5 番）"
+    if "象眼" in fan_name:
+        return "以二、五或八作為對眼（每對 +2 番；嚦咕有幾多對計幾多，十六不搭亦可計）"
     if "正花" in fan_name:
-        return f"花牌號碼與自己門風（{TILE_NAMES[ctx.seat_wind]}位）相符，每隻計 2 番"
+        return f"花牌號碼與自己門風（{TILE_NAMES[ctx.seat_wind]}位）相符（2番/隻）"
     if "爛花" in fan_name:
-        return "花牌號碼與自己門風不同，每隻計 1 番"
-    if "一台花" in fan_name:
-        return "集齊同一系列（春夏秋冬 或 梅蘭菊竹）全部 4 隻花牌"
-    if "兩台花" in fan_name:
-        return "集齊春夏秋冬 + 梅蘭菊竹全部 8 隻花牌直接食胡"
+        return "花牌號碼與自己門風不同（1番/隻）"
     if fan_name == "門清自摸":
-        return "門前清（無上、無碰、無明槓）且自己摸入食胡牌（合併計 5 番，不重複計門清3+自摸1）"
+        return "門前清且自摸（一摸八，合共計 8 番；嚦咕/不搭/十三么不計）"
     if fan_name == "門清":
-        return "全副牌沒有上、碰或明槓（全部面子皆為自己手牌或暗槓），食人打出胡牌"
-    if fan_name == "自摸":
-        return "已有副露落地的情況下，自己摸入第 17 張食胡牌"
-    if "聽牌" in fan_name:
-        return "已向各家宣告「聽牌（叮）」，期間無轉章、無暗槓"
+        return "門前清（無上、碰、明槓）食人打出（+5 番；嚦咕/不搭/十三么不計）"
+    if fan_name == "聽牌(門清)":
+        return "門前清狀態下宣告聽牌（門清叮，合共計 10 番）"
+    if fan_name == "聽牌":
+        return "已宣告聽牌（叮，+5 番）"
+    if fan_name == "天聽":
+        return "起手未打牌即宣告聽牌（天叮，+50 番；莊家摸頭牌換牌亦可天叮）"
+    if fan_name == "地聽":
+        return "第一巡摸牌後即宣告聽牌（地叮，+45 番）"
     if fan_name == "對碰":
-        return "手牌手持兩對對子叫胡，食胡其中一對成為刻子"
-    if fan_name == "假獨":
-        return "多面聽牌型中，可拆解視為單釣眼、邊張或卡張叫胡"
+        return "手持兩對叫對碰食胡（+2 番）"
     if fan_name == "獨獨":
-        return "單釣一隻眼、邊張（12胡3 / 89胡7）或卡張（嵌張，如24胡3），只叫單一隻牌"
-    if fan_name == "清一色":
-        return "全副 17 張牌皆為同一門花色（萬、筒或索），且無任何字牌（不再重複計無字）"
-    if fan_name == "混一色":
-        return "全副牌由單一門序數牌（萬、筒或索）加上番子字牌組成"
-    if fan_name == "五門齊":
-        return "全副牌同時齊備「萬、筒、索、風牌（東南西北）、三元牌（中發白）」全部五門"
-    if fan_name == "缺一門":
-        return "萬、筒、索三門之中缺少了其中一門（依規則不重複計無字）"
-    if fan_name == "斷么":
-        return "全副牌沒有任何么九牌（1、9）及番子字牌（全部為 2～8 的序數牌）"
-    if fan_name == "全帶混么":
-        return "5 組面子及對眼，每一組都帶有么九牌（1、9）或番子字牌"
-    if fan_name == "全帶么":
-        return "5 組面子及對眼，每一組都帶有 1 或 9 的序數牌（且無番子）"
-    if fan_name == "混么":
-        return "全副牌全部由么九牌（1、9）及番子字牌組成（無順子）"
-    if fan_name == "清么":
-        return "全副牌全部由 1 及 9 的序數牌刻子與對眼組成（無字牌、無順子）"
-    if fan_name == "間間胡":
-        return "門前清 + 自摸 + 對對胡（即手牌 5 組暗刻自摸，直接計最高 100 番）"
-    if fan_name == "對對胡":
-        return "5 組面子全部皆為刻子（三隻相同）或槓子，沒有任何順子"
-    if "暗刻" in fan_name:
-        return "手牌中未碰出的刻子（含明槓、暗槓）達到對應組數"
-    if fan_name == "全求人":
-        return "全副牌 5 組面子全部已上/碰/明槓落地，餘下單釣一隻食人打出"
-    if fan_name == "半求人":
-        return "全副牌 5 組面子全部已上/碰/明槓落地，餘下單釣一隻自己摸入"
-    if fan_name == "大三元":
-        return "集齊「中、發、白」全部 3 組三元牌刻子/槓子"
-    if fan_name == "小三元":
-        return "集齊「中、發、白」其中 2 組刻子/槓子，並以第 3 種三元牌作對眼"
-    if fan_name == "大四喜":
-        return "集齊「東、南、西、北」全部 4 組風牌刻子/槓子"
-    if fan_name == "小四喜":
-        return "集齊「東、南、西、北」其中 3 組刻子/槓子，並以第 4 種風牌作對眼"
-    if fan_name == "大三風":
-        return "集齊「東、南、西、北」其中 3 組風牌刻子/槓子"
-    if fan_name == "小三風":
-        return "集齊「東、南、西、北」其中 2 組風牌刻子/槓子，並以另一種風牌作對眼"
-    if "正風" in fan_name:
-        return f"刻子/槓子與自己的門風（{TILE_NAMES[ctx.seat_wind]}位）相同"
-    if "非正風" in fan_name:
-        return "刻子/槓子為非自己門風的風牌"
-    if "碰出" in fan_name:
-        return "持有三元牌（中、發或白）刻子或槓子"
-    if fan_name == "暗龍":
-        return "門前手牌中集齊同一門花色的「123 + 456 + 789」三組暗順子"
-    if fan_name == "明龍":
-        return "集齊同一門花色的「123 + 456 + 789」三組順子（其中包含已上牌落地的順子）"
-    if fan_name == "暗雜龍":
-        return "門前手牌中集齊萬、筒、索三種不同花色各一組的「123 + 456 + 789」暗順子"
-    if fan_name == "明雜龍":
-        return "集齊萬、筒、索三種不同花色各一組的「123 + 456 + 789」順子（含已落地順子）"
-    if "老少" in fan_name:
-        return "同一門花色同時集齊「123 + 789」順子，或「111 + 999」刻子"
-    if fan_name == "五同順":
-        return "5 組面子全部為相同數字的順子（依規則不再重複計三相逢/一般高/三般高）"
-    if fan_name == "四般高":
-        return "4 組同一門花色且相同數字的順子（已同時構成四歸四）"
-    if fan_name == "四同順":
-        return "4 組不同花色但相同數字的順子（依規則不再重複計三相逢/一般高/三般高）"
-    if fan_name == "三般高":
-        return "3 組同一門花色且完全相同的順子"
-    if fan_name == "一般高":
-        return "2 組同一門花色且完全相同的順子"
+        return "單釣眼、邊張或卡張獨聽一隻牌（+2 番）"
+    if fan_name == "假獨":
+        return "多面聽牌型中可拆解為單釣或偏章（+1 番；若計暗龍則有大計大不計假獨）"
+    if "花/槓上自摸" in fan_name:
+        return "補花或開槓後連續自摸（1連=1番、2連=5番、3連=20番、4連=50番）"
+    if fan_name == "搶槓":
+        return "搶別人加槓的牌食胡（+5 番，當出沖計）"
+    if "一炮" in fan_name:
+        return "同一張出沖牌同時令兩家（雙響+5番）或三家（三響+15番）食胡"
+    if "通天清龍" in fan_name:
+        return "同一門花色 1~9 貫穿全副 17 張手牌，且頭(1)或尾(9)湊足至少三隻（+240 番）"
+    if "通天雜龍" in fan_name:
+        return "跨門花色 1~9 貫穿全副 17 張手牌，且頭(1)或尾(9)湊足至少三隻（+100 番）"
+    if "清龍" in fan_name:
+        return "同一門花色集齊 123 + 456 + 789 三組順子（明龍 10 番 / 門前暗龍 20 番）"
+    if "雜龍" in fan_name:
+        return "萬、筒、索三門各一組湊齊 123 + 456 + 789（明雜龍 8 番 / 暗雜龍 15 番）"
+    if fan_name == "全步高":
+        return "全副 5 組面子皆為順子，且起始數字依次遞增 1（+40 番）"
+    if "單色步步高" in fan_name:
+        return "同一門花色有 3 組順子起始數字依次遞增 1（明 10 番 / 暗 20 番）"
+    if "三色步步高" in fan_name:
+        return "萬、筒、索三門各有一組順子，且起始數字依次遞增 1（明 5 番 / 暗 10 番）"
+    if fan_name == "全相逢":
+        return "5 組順子呈「3組三相逢 + 2組相逢」3+2 結構（+30 番；依備註不重複計三暗刻/三姊妹）"
     if "三相逢" in fan_name:
-        return "萬、筒、索三門各有一組相同數字的順子"
-    if "二相逢" in fan_name:
-        return "不同門花色有兩組相同數字的順子"
-    if "大三兄弟" in fan_name:
-        return "萬、筒、索三門各有一組相同數字的刻子"
-    if "小三兄弟" in fan_name:
-        return "不同門花色有兩組相同數字的刻子，加上第三門相同數字的對眼"
-    if "二兄弟" in fan_name:
-        return "不同門花色有兩組相同數字的刻子"
-    if fan_name == "大三姊妹":
-        return "同一門花色有 3 組序數相連的刻子（例如一萬刻、二萬刻、三萬刻）"
-    if fan_name == "小三姊妹":
-        return "同一門花色有 2 組序數相連的刻子，加上同門相連序數的對眼"
-    if "四歸四" in fan_name:
-        return "未開槓的情況下用盡 4 張相同牌，且分別散落在 4 組順子中"
-    if "四歸二" in fan_name:
-        return "未開槓的情況下用盡 4 張相同牌，其中 2 張作對眼、另外 2 張在兩組順子中"
-    if "四歸一" in fan_name:
-        return "未開槓的情況下用盡 4 張相同牌，其中 3 張作刻子、另外 1 張在順子中"
-    if "明槓" in fan_name:
-        return "已落地的明槓（每組計 1 番）"
-    if "暗槓" in fan_name:
-        return "自己摸齊 4 張開出的暗槓（每組計 2 番，且仍保持門前清）"
-    if "十三么" in fan_name:
-        return "集齊 13 種么九番子（其中一種成對眼），外加手牌自己摸入的一組順子或暗刻"
-    if "十六不搭" in fan_name:
-        return "齊備東南西北中發白，且萬、筒、索每門各 3 隻互不相連（差值≥3），再加一對眼"
-    if "嚦咕嚦咕" in fan_name:
-        return "門前手牌由 8 對子組成（即 7 對子 + 1 組三隻相同的暗刻，不可碰出）"
-    if "雞胡" in fan_name:
-        return "胡出時（不計莊前）手牌只得 1 番，且非自摸、非聽牌，依港式台牌牌例升級為 10 番"
-    if fan_name == "莊家":
-        return "本局身為莊家，基本額外加 1 番"
-    if "拉莊" in fan_name or "連" in fan_name:
-        return f"莊家連莊加番：按公式（連莊數 {ctx.dealer_streak} × 2 + 1）額外加 {ctx.dealer_streak * 2 + 1} 番"
-    return "符合港式十六張台牌特殊時機或牌型加番規則"
+        return "萬、筒、索三門各有一組相同數字的順子（明 10 番 / 暗 20 番）"
+    if fan_name == "相逢":
+        return "不同門花色有兩組相同數字的順子（+3 番）"
+    if fan_name in ("一般高", "三般高", "四般高"):
+        return "同一門花色有 2 組(5番) / 3 組(20番) / 4 組(40番) 完全相同的順子"
+    if fan_name in ("兩姊妹", "小三姊妹", "大三姊妹"):
+        return "同一門花色有相連數字的刻子（2連刻=5番、2連刻+相連眼=10番、3連刻=20番）"
+    if fan_name in ("兩兄弟", "小三兄弟", "大三兄弟"):
+        return "不同門花色有相同數字的刻子（2刻=5番、2刻+同數眼=10番、3刻=20番）"
+    if "四歸" in fan_name:
+        return "未開槓下用盡 4 張相同牌散落於順子/刻子/眼中（明 5/10/20 番，全暗翻倍為 10/20/40 番）"
+    if fan_name == "坎坎糊":
+        return "門前清 5 組暗刻（自摸或單吊食人打出，直接計 160 番，不再計對對糊 30 番）"
+    if fan_name == "五暗刻":
+        return "5 組暗刻/暗槓（直接計 100 番，不再計對對糊 30 番）"
+    if fan_name == "大於5":
+        return "全副 17 張牌全部由 6、7、8、9 數牌組成，無番子（+60 番）"
+    if fan_name == "小於5":
+        return "全副 17 張牌全部由 1、2、3、4 數牌組成，無番子（+60 番）"
+    if fan_name == "缺5":
+        return "全副牌沒有任何一張五萬、五筒或五索（+10 番）"
+    if "滿庭芳" in fan_name:
+        return "全帶X(60番) / 混帶X(20番)：每組數牌面子與數牌眼皆包含指定數字 X（混滿庭芳最多可疊計 3 次）"
+    if fan_name == "七門齊":
+        return "同時齊備「萬、筒、索、風牌、三元牌、四季(草)、四君子(花)」全部 7 門（+20 番）"
+    if fan_name == "五門齊":
+        return "同時齊備「萬、筒、索、風牌、三元牌」全部 5 門（+15 番）"
+    if "大雞糊" in fan_name:
+        return "17 隻手牌本身計唔到任何手牌番種，觸發大雞糊（+45 番，可照加自摸/叮/花/4-7-10隻內）"
+    if "連對" in fan_name:
+        return "嚦咕嚦咕手牌中含有同一門連續數字的對子（3/4/5/6/7連對分別加 5/10/20/30/60 番）"
+    if "嚦咕減半" in fan_name:
+        return "依備註：嚦咕嚦咕集齊三元、三風或四喜時，按原番數除一半計算"
+    return "符合最新《港式台牌番數表》複式加番規則"
 
 
 # ==========================================
@@ -270,20 +222,20 @@ def clear_all_tiles():
 
 
 # ==========================================
-# 4. 標題與牌局基本設定區
+# 4. 標題與牌局基本設定區 (預設 1番 = $0.1)
 # ==========================================
-st.title("🀄 港式台牌計番神器")
-st.caption("支援 16 張港式新章｜自動拆牌找最高番｜詳細展示牌型拆解與番數推導算式")
+st.title("🀄 港式台牌計番神器 (新章複式版)")
+st.caption("已全面更新最新番數表｜支援步步高、通天龍、混滿庭芳、七門齊、大雞糊及明暗雙軌計番")
 
-with st.expander("⚙️ 牌局底價、風位與莊家設定", expanded=False):
+with st.expander("⚙️ 牌局底價、風位與莊家設定 (預設 1番 = $0.1)", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
         base_price = st.number_input(
             "一底金額 ($)",
             min_value=0.0,
-            value=1.0,      # 預設 $1 底 (可自由改為 0.5 或 10)
-            step=0.5,       # 每次加減 $0.5
-            format="%.2f"
+            value=1.0,
+            step=0.5,
+            format="%.2f",
         )
         seat_wind_label = st.selectbox(
             "自己門風 (正風)",
@@ -294,10 +246,10 @@ with st.expander("⚙️ 牌局底價、風位與莊家設定", expanded=False):
     with c2:
         fan_price = st.number_input(
             "每番金額 ($)",
-            min_value=0.01, # 允許低至 $0.01 (一仙)
-            value=0.10,     # 預設 1番 = $0.1 (一毫子)
-            step=0.10,      # 每次加減 $0.1
-            format="%.2f"
+            min_value=0.01,
+            value=0.10,
+            step=0.10,
+            format="%.2f",
         )
         is_dealer = st.checkbox("我是莊家 (+1番)", value=False)
         dealer_streak = st.number_input(
@@ -309,73 +261,114 @@ with st.expander("⚙️ 牌局底價、風位與莊家設定", expanded=False):
             disabled=not is_dealer,
         )
 
-
 st.markdown("---")
 
 # ==========================================
-# 5. 花牌與胡牌狀態勾選區
+# 5. 花牌、草牌與食胡狀態勾選區
 # ==========================================
-st.subheader("🌸 一、花牌與食胡狀態")
+st.subheader("🌸 一、花草牌與食胡狀態")
 
 col_f1, col_f2, col_f3 = st.columns(3)
 with col_f1:
     good_flowers = st.number_input("正花 (2番/隻)", min_value=0, max_value=4, value=0)
 with col_f2:
-    bad_flowers = st.number_input("爛花 (1番/隻)", min_value=0, max_value=4, value=0)
+    bad_flowers = st.number_input("爛花 (1番/隻)", min_value=0, max_value=8, value=0)
 with col_f3:
     flower_sets = st.selectbox(
-        "一台花 / 花胡",
-        options=[(0, "無"), (1, "一台花 (10番)"), (2, "兩台花胡 (30番)")],
+        "一台花加番",
+        options=[(0, "無"), (1, "一台花 (+10番)"), (2, "兩台花 (+30番)")],
         format_func=lambda x: x[1],
     )[0]
 
-is_flower_hu_only = st.checkbox("🌺 集齊 8 隻花直接食胡（兩台花胡 30 番，不計手牌）", value=(flower_sets == 2))
+fg_col1, fg_col2, fg_col3 = st.columns(3)
+with fg_col1:
+    has_season_grass = st.checkbox("🌱 有四季草(春夏秋冬)", value=False, help="用於判定【七門齊 (20番)】")
+with fg_col2:
+    has_plant_flower = st.checkbox("🌺 有四君子花(梅蘭菊竹)", value=False, help="用於判定【七門齊 (20番)】")
+with fg_col3:
+    special_flower_hu = st.selectbox(
+        "特殊花胡直接食胡",
+        options=[("none", "無 (正常手牌食胡)"), ("qiqiangyi", "七搶一 (50番)"), ("baxianguohai", "八仙過海 (100番)")],
+        format_func=lambda x: x[1],
+    )[0]
 
-col_s1, col_s2 = st.columns(2)
+col_s1, col_s2, col_s3 = st.columns(3)
 with col_s1:
-    is_zimo = st.checkbox("🙌 自摸 (連門清計5番)", value=False)
-    is_riichi = st.checkbox("📢 聽牌 / 叮 (+5番)", value=False)
+    is_zimo = st.checkbox("🙌 自摸 (門清自摸8番)", value=False)
 with col_s2:
+    riichi_type = st.selectbox(
+        "聽牌 (叮) 狀態",
+        options=[
+            ("none", "無聽牌"),
+            ("riichi", "聽牌(叮) (+5番 / 門清+10番)"),
+            ("diting", "地聽 (+45番)"),
+            ("tianting", "天聽 (+50番)"),
+        ],
+        format_func=lambda x: x[1],
+    )[0]
+with col_s3:
     wait_type = st.selectbox(
-        "叫胡牌型 (對碰/假獨/獨獨)",
+        "叫胡方式 (對碰/獨獨/假獨)",
         options=[
             ("normal", "一般兩面/多面 (0番)"),
-            ("duipeng", "對碰 (+1番)"),
+            ("duipeng", "對碰 (+2番)"),
+            ("dudu", "獨獨：單釣/邊/卡張 (+2番)"),
             ("jiadu", "假獨 (+1番)"),
-            ("dudu", "獨獨：單釣/邊張/卡張 (+2番)"),
         ],
         format_func=lambda x: x[1],
     )[0]
 
-with st.expander("⚡ 特殊時機與槓上/搶槓選項（天地人胡、海底、七只內等）"):
+with st.expander("⚡ 進階時機、槓上自摸(1/5/20/50) 與 8飛/13飛/16飛選項"):
     sp1, sp2 = st.columns(2)
     with sp1:
-        timing_special = st.selectbox(
-            "起手 / 巡數特殊番",
+        timing_hu = st.selectbox(
+            "起手 / 檯面隻數特殊番 (4/7/10隻內)",
             options=[
                 ("none", "無"),
-                ("tianhu", "天胡 (+100番)"),
-                ("dihu", "地胡 (+80番)"),
-                ("renhu", "人胡 (+80番)"),
-                ("7tiles", "七只內食胡 (+20番)"),
-                ("10tiles", "十只內食胡 (+10番)"),
+                ("tianhu", "天糊 (+100番)"),
+                ("dihu", "地糊 (+90番)"),
+                ("renhu", "人糊 (+80番)"),
+                ("4tiles", "四隻內 (+40番)"),
+                ("7tiles", "七隻內 (+20番)"),
+                ("10tiles", "十隻內 (+10番)"),
             ],
             format_func=lambda x: x[1],
         )[0]
-        is_haidi = st.checkbox("🌕 海底撈月 (最後一隻自摸 +20番)", value=False)
+        last_tile_hu = st.selectbox(
+            "最後一隻牌 (海底 / 河底)",
+            options=[("none", "無"), ("haidi", "海底撈月 (自摸 +40番)"), ("hedi", "河底撈月 (出沖 +20番)")],
+            format_func=lambda x: x[1],
+        )[0]
+        special_wait_variant = st.selectbox(
+            "特殊牌型聽牌升級 (8飛嚦咕 / 16飛不搭 / 13-14飛十三么)",
+            options=[
+                ("none", "一般聽牌"),
+                ("8fei_ligu", "8飛嚦咕嚦咕 (55番)"),
+                ("16fei_buda", "16飛十六不搭 (60番)"),
+                ("13fei_13yao", "13飛十三么 (130番)"),
+                ("14fei_13yao", "14飛十三么 (140番)"),
+            ],
+            format_func=lambda x: x[1],
+        )[0]
     with sp2:
-        is_huashang = st.checkbox("🌼 花上食胡 (摸花自摸 +1番)", value=False)
-        kong_special = st.selectbox(
-            "槓上 / 搶槓狀態",
+        consecutive_fk = st.selectbox(
+            "花/槓上自摸累進 (1/5/20/50番)",
             options=[
-                ("none", "無"),
-                ("gangshang", "槓上自摸 (+1番)"),
-                ("qianggang", "搶槓食胡 (+1番，當出沖)"),
-                ("gang_on_gang", "槓上槓自摸 (+30番)"),
-                ("qiang_gang_on_gang", "搶槓上槓食胡 (+30番)"),
+                (0, "無"),
+                (1, "1隻花 或 1槓自摸 (+1番)"),
+                (2, "連續 2 花/槓自摸 (+5番)"),
+                (3, "連續 3 花/槓自摸 (+20番)"),
+                (4, "連續 4 花/槓自摸 (+50番)"),
             ],
             format_func=lambda x: x[1],
         )[0]
+        is_qianggang = st.checkbox("⚔️ 搶槓食胡 (+5番，當出沖)", value=False)
+        multi_ron = st.selectbox(
+            "一炮多響",
+            options=[(1, "無 (單響)"), (2, "一炮雙響 (+5番)"), (3, "一炮三響 (+15番)")],
+            format_func=lambda x: x[1],
+        )[0]
+        buda_dragon_is_concealed = st.checkbox("🐉 十六不搭若中不搭龍/三相逢，屬門前暗成 (+20番，否則+10番)", value=True)
 
 st.markdown("---")
 
@@ -516,7 +509,7 @@ with tab_honor:
 st.markdown("---")
 
 # ==========================================
-# 8. 【全新升級】牌型組合拆解展示 & 番數具體計算方式
+# 8. 牌型組合拆解展示 & 番數具體計算方式
 # ==========================================
 st.subheader("🏆 四、所湊成的牌型組合與「番」數計算方式")
 
@@ -532,42 +525,40 @@ ctx = GameContext(
     good_flowers=good_flowers,
     bad_flowers=bad_flowers,
     flower_sets=flower_sets,
-    is_flower_hu_only=is_flower_hu_only,
+    has_season_grass=has_season_grass or (flower_sets > 0),
+    has_plant_flower=has_plant_flower or (flower_sets == 2),
+    special_flower_hu=special_flower_hu,
     is_zimo=is_zimo,
-    is_riichi=is_riichi,
+    riichi_type=riichi_type,
     wait_type=wait_type,
-    is_tianhu=(timing_special == "tianhu"),
-    is_dihu=(timing_special == "dihu"),
-    is_renhu=(timing_special == "renhu"),
-    within_tiles=7 if timing_special == "7tiles" else (10 if timing_special == "10tiles" else 0),
-    is_haidi=is_haidi,
-    is_huashang=is_huashang,
-    is_gangshang=(kong_special == "gangshang"),
-    is_qianggang=(kong_special == "qianggang"),
-    is_gang_on_gang=(kong_special == "gang_on_gang"),
-    is_qiang_gang_on_gang=(kong_special == "qiang_gang_on_gang"),
+    special_wait_variant=special_wait_variant,
+    buda_dragon_is_concealed=buda_dragon_is_concealed,
+    timing_hu=timing_hu,
+    last_tile_hu=last_tile_hu,
+    consecutive_flower_kong_zimo=consecutive_fk,
+    is_qianggang=is_qianggang,
+    multi_ron=multi_ron,
     is_dealer=is_dealer,
     dealer_streak=dealer_streak if is_dealer else 0,
     base_price=base_price,
     fan_price=fan_price,
 )
 
-if is_flower_hu_only or current_hand_len == expected_hand_len:
+if special_flower_hu != "none" or current_hand_len == expected_hand_len:
     res = calculate_hk_tw_mahjong(st.session_state.hand_tiles, st.session_state.fixed_melds, ctx)
 
     if res.is_valid_hu:
         st.success(f"🎉 食胡成功！系統已自動為你選出最高番數的拆牌組合：【{res.hand_pattern_name}】")
 
-        # 1. 頂部三大總結指標
         m1, m2, m3 = st.columns(3)
         m1.metric("最終總番數", f"{res.total_fan} 番")
-        m2.metric("單家應付 (基本)", f"${res.base_payout:.1f}")
-        if ctx.is_zimo and not (ctx.is_qianggang or ctx.is_qiang_gang_on_gang):
-            m3.metric("自摸三家總收", f"${res.base_payout * 3:.1f}")
+        m2.metric("單家應付 (基本)", f"${res.base_payout:.2f}")
+        if ctx.is_zimo and not ctx.is_qianggang:
+            m3.metric("自摸三家總收", f"${res.base_payout * 3:.2f}")
         else:
-            m3.metric("出沖應收", f"${res.base_payout:.1f}")
+            m3.metric("出沖應收", f"${res.base_payout:.2f}")
 
-        # 2. 視覺化展示所湊成的牌型組合 (5組面子 + 1對眼 卡片)
+        # (A) 視覺化展示所湊成的牌型組合
         st.markdown("#### 🧩 (A) 你所湊成的牌型組合拆解")
         if res.hand_pattern_name == "標準牌型(5面子+1眼)" and res.best_melds:
             st.caption("系統將你的 17 張牌拆解為以下 **5 組面子（順子/刻子/槓）＋ 1 對雀頭眼**，以取得最高番數：")
@@ -598,7 +589,7 @@ if is_flower_hu_only or current_hand_len == expected_hand_len:
                 p_icon = UNICODE_TILES[res.best_pair] * 2
                 p_name = f"{TILE_NAMES[res.best_pair]} 對眼"
                 is_jiang = (res.best_pair < 40 and (res.best_pair % 10) in (2, 5, 8))
-                eye_tag = "雀頭對眼 (二五八將眼 +1番)" if is_jiang else "雀頭對眼 (一般眼)"
+                eye_tag = "雀頭對眼 (二五八象眼 +2番)" if is_jiang else "雀頭對眼 (一般眼)"
                 with card_cols[5 % 3]:
                     st.markdown(
                         f"""
@@ -611,14 +602,11 @@ if is_flower_hu_only or current_hand_len == expected_hand_len:
                         unsafe_allow_html=True,
                     )
         else:
-            # 特殊牌型（十三么 / 十六不搭 / 嚦咕嚦咕 / 兩台花）展示
             all_icons = " ".join(f"{UNICODE_TILES[t]}({TILE_NAMES[t]})" for t in st.session_state.hand_tiles)
             st.info(f"**特殊牌型結構【{res.hand_pattern_name}】**：\n\n{all_icons}")
 
-        # 3. 番數的具體計算方式與原因明細表
+        # (B) 番數的具體計算方式與原因明細表
         st.markdown("#### 🧮 (B) 「番」數的具體計算方式與觸發原因")
-        st.caption("以下逐項列出本局成立的番種、所加番數，以及為何這樣計算（已自動排除重複計算的小番）：")
-
         detailed_rows = []
         for fan_name, score in res.fan_breakdown:
             reason_text = explain_fan_reason(fan_name, res.best_melds, res.best_pair, ctx)
@@ -631,18 +619,18 @@ if is_flower_hu_only or current_hand_len == expected_hand_len:
             )
         st.table(detailed_rows)
 
-        # 4. 最終番數與金額完整算式推導盒
+        # (C) 最終總番數與金額算式推導
         st.markdown("#### 📐 (C) 最終總番數與金額算式推導")
         fan_terms_str = " ＋ ".join(f"{score}番({name})" for name, score in res.fan_breakdown)
-        effective_zimo = ctx.is_zimo and not (ctx.is_qianggang or ctx.is_qiang_gang_on_gang)
+        effective_zimo = ctx.is_zimo and not ctx.is_qianggang
         if effective_zimo:
             payout_explain = (
-                f"單家應付：<code>{res.total_fan} 番 × ${fan_price:.1f} (每番) ＋ ${base_price:.1f} (一底) ＝ ${res.base_payout:.1f}</code><br>"
-                f"🙌 <b>自摸三家總收</b>：<code>${res.base_payout:.1f} × 3 家 ＝ ${res.base_payout * 3:.1f}</code>"
+                f"單家應付：<code>{res.total_fan} 番 × ${fan_price:.2f} (每番) ＋ ${base_price:.2f} (一底) ＝ ${res.base_payout:.2f}</code><br>"
+                f"🙌 <b>自摸三家總收</b>：<code>${res.base_payout:.2f} × 3 家 ＝ ${res.base_payout * 3:.2f}</code>"
             )
         else:
             payout_explain = (
-                f"🎯 <b>出沖單家應付</b>：<code>{res.total_fan} 番 × ${fan_price:.1f} (每番) ＋ ${base_price:.1f} (一底) ＝ ${res.base_payout:.1f}</code>"
+                f"🎯 <b>出沖單家應付</b>：<code>{res.total_fan} 番 × ${fan_price:.2f} (每番) ＋ ${base_price:.2f} (一底) ＝ ${res.base_payout:.2f}</code>"
             )
 
         st.markdown(
@@ -671,6 +659,7 @@ if is_flower_hu_only or current_hand_len == expected_hand_len:
                 min_value=0.0,
                 value=float(st.session_state.lazhuang_debt),
                 step=0.5,
+                format="%.2f",
             )
         with lz_col2:
             lz_mode = st.selectbox(
@@ -684,7 +673,7 @@ if is_flower_hu_only or current_hand_len == expected_hand_len:
             )[0]
 
         if lz_mode == "first_win":
-            st.info(f"📌 **今鋪起拉金額**：`${res.base_payout:.1f}`（公式：{res.total_fan}番 × ${fan_price} + ${base_price}底）")
+            st.info(f"📌 **今鋪起拉金額**：`${res.base_payout:.2f}`（公式：{res.total_fan}番 × ${fan_price:.2f} + ${base_price:.2f}底）")
             if st.button("📥 記下此筆金額作為下一鋪「上鋪欠款」"):
                 st.session_state.lazhuang_debt = res.base_payout
                 st.rerun()
@@ -699,9 +688,7 @@ if is_flower_hu_only or current_hand_len == expected_hand_len:
             st.json(settlement)
             if lz_mode == "continue_win":
                 latest_total = settlement["拉莊後最新累積金額 (x1.5 + 今鋪)"]
-                st.warning(
-                    f"🔥 **拉莊算式**：`(${prev_debt:.1f} × 1.5) ＋ ${res.base_payout:.1f} ＝ ${latest_total:.1f}`"
-                )
+                st.warning(f"🔥 **拉莊算式**：`(${prev_debt:.2f} × 1.5) ＋ ${res.base_payout:.2f} ＝ ${latest_total:.2f}`")
                 if st.button("📥 更新累積拉莊欠款至下一鋪"):
                     st.session_state.lazhuang_debt = latest_total
                     st.rerun()
