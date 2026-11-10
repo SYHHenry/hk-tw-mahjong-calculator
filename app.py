@@ -1,8 +1,3 @@
-''' Local run method:
-1. right click personal side project
-2. Open in Integrated Terminal
-3. Enter py -m streamlit run app.py'''
-
 # ==========================================
 # 港式台牌計番神器 - 手機觸控網頁介面
 # Version: PTV1.0
